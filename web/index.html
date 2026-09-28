@@ -5,30 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Valheim Admin</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 8v8c0 7 5 12 12 14 7-2 12-7 12-14V8z' fill='%23c8893a'/%3E%3Cpath d='M11 10h10l-5 12z' fill='%23231a10'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <div id="login" class="login" hidden>
-    <form class="login-card" id="login-form">
-      <div class="brand brand-lg"><span class="brand-mark"></span><span>Valheim Admin</span></div>
-      <label><span data-t="login.password"></span><input type="password" id="login-password" autocomplete="current-password" required autofocus></label>
-      <button class="btn primary" type="submit" data-t="login.submit"></button>
-      <p class="error" id="login-error" hidden></p>
-      <div class="lang-switch" data-lang-switch></div>
-    </form>
-  </div>
-
-  <div id="app" class="app" hidden>
+  <div id="app" class="app">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark"></span><span>Valheim Admin</span></div>
+      <div class="brand"><span class="brand-mark"></span><span id="brand-name">Valheim Admin</span></div>
       <nav id="nav"></nav>
       <div class="sidebar-foot">
         <div class="lang-switch" data-lang-switch></div>
-        <button class="btn ghost small" id="logout" data-t="nav.logout"></button>
+        <button class="btn small" id="login-btn" data-t="login.open"></button>
+        <button class="btn ghost small" id="logout" data-t="nav.logout" hidden></button>
       </div>
     </aside>
     <main>
-      <header class="topbar">
+      <header class="topbar" id="topbar" hidden>
         <div class="server-pill" id="server-pill"><span class="dot"></span><span id="server-state"></span></div>
         <div class="topbar-stats" id="topbar-stats"></div>
         <div class="live" id="live-indicator" title=""></div>
@@ -37,9 +29,23 @@
     </main>
   </div>
 
+  <dialog id="login-dialog" class="dialog login-dialog">
+    <form id="login-form">
+      <h2 data-t="login.title"></h2>
+      <label><span data-t="login.password"></span><input type="password" id="login-password" autocomplete="current-password" required></label>
+      <p class="note warn-note" id="login-insecure" data-t="login.insecure" hidden></p>
+      <p class="error" id="login-error" hidden></p>
+      <div class="actions">
+        <button type="button" class="btn" id="login-cancel" data-t="btn.cancel"></button>
+        <button class="btn primary" type="submit" data-t="login.submit"></button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <dialog id="dialog" class="dialog"></dialog>
 
+  <script src="vendor/leaflet/leaflet.js"></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -52,6 +52,16 @@ public sealed class SnapshotRetention
     public List<string> IgnoreDataKeys { get; set; } = [];
 }
 
+/// <summary>Optional HTTPS listener, recommended when the panel is reachable from the internet.</summary>
+public sealed class HttpsConfig
+{
+    /// <summary>0 = off.</summary>
+    public int Port { get; set; }
+    /// <summary>PFX/PKCS#12 file with the certificate and its private key.</summary>
+    public string CertificatePath { get; set; } = "";
+    public string CertificatePassword { get; set; } = "";
+}
+
 public sealed class AgentConfig
 {
     /// <summary>"en" or "ru": event messages, agent log lines and in-game announcements.</summary>
@@ -60,6 +70,7 @@ public sealed class AgentConfig
     /// <summary>Addresses the panel listens on besides the auto-detected Tailscale one.</summary>
     public List<string> BindAddresses { get; set; } = ["127.0.0.1"];
     public bool ListenTailscale { get; set; } = true;
+    public HttpsConfig Https { get; set; } = new();
 
     /// <summary>Plain password; the agent replaces it with <see cref="PanelPasswordHash"/> on start.</summary>
     public string PanelPassword { get; set; } = "";

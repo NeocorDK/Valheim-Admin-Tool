@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using ValheimAdmin.Agent;
@@ -44,10 +45,16 @@ builder.Logging.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat =
 builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
 var addresses = await ListenAddresses(config);
+bool https = config.Https.Port > 0 && !string.IsNullOrWhiteSpace(config.Https.CertificatePath);
 builder.WebHost.ConfigureKestrel(k =>
 {
     foreach (var address in addresses)
+    {
         k.Listen(address, config.HttpPort);
+        if (https)
+            k.Listen(address, config.Https.Port, o => o.UseHttps(
+                Path.GetFullPath(config.Https.CertificatePath, Path.GetDirectoryName(config.FilePath)!), config.Https.CertificatePassword));
+    }
 });
 
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
@@ -70,6 +77,16 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         o.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = 403; return Task.CompletedTask; };
     });
 builder.Services.AddAuthorization();
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // Per address: the login also locks an address out after 5 wrong passwords (LoginGuard).
+    o.AddPolicy("login", ctx => RateLimitPartition.GetFixedWindowLimiter(ctx.Connection.RemoteIpAddress?.ToString() ?? "?",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1) }));
+    // The public map polls markers every few seconds; this only stops floods.
+    o.AddPolicy("public", ctx => RateLimitPartition.GetFixedWindowLimiter(ctx.Connection.RemoteIpAddress?.ToString() ?? "?",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 300, Window = TimeSpan.FromMinutes(1) }));
+});
 
 builder.Services.AddSingleton(config);
 builder.Services.AddSingleton(new Db(Path.Combine(config.DataPath, "valheim-admin.db")));
@@ -86,6 +103,7 @@ builder.Services.AddSingletonHosted<ServerManager>();
 builder.Services.AddSingletonHosted<Scheduler>();
 builder.Services.AddSingleton<Updater>();
 builder.Services.AddSingleton<StatusBuilder>();
+builder.Services.AddSingleton<MapProxy>();
 builder.Services.AddHostedService<StatusPump>();
 
 var app = builder.Build();
@@ -99,9 +117,11 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 app.MapApi();
 
-app.Logger.LogInformation("Panel: {Urls}", string.Join(", ", addresses.Select(a => $"http://{a}:{config.HttpPort}")));
+app.Logger.LogInformation("Panel: {Urls}", string.Join(", ", addresses.Select(a => $"http://{a}:{config.HttpPort}")
+    .Concat(https ? addresses.Select(a => $"https://{a}:{config.Https.Port}") : [])));
 await app.RunAsync();
 return 0;
 

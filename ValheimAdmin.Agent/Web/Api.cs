@@ -20,6 +20,7 @@ public sealed record ListChangeBody(string Op, string Value);
 public sealed record TakeSnapshotBody(string? Player);
 public sealed record ConfigWriteBody(string Path, string Content);
 public sealed record PasswordBody(string Current, string New);
+public sealed record PinBody(double X, double Z, string? Label, string? Icon, bool Public);
 
 public sealed class SettingsBody
 {
@@ -47,6 +48,18 @@ public static partial class Api
 
     private static string Who(HttpContext ctx) => ctx.Connection.RemoteIpAddress?.ToString() ?? "?";
 
+    /// <summary>Panel sections this backend offers; the plugin's own web server offers fewer.</summary>
+    private static readonly string[] features =
+        ["map", "overview", "console", "events", "players", "characters", "configs", "maintenance", "server-control", "updates", "log-archive"];
+
+    /// <summary>A PNG with an ETag; browsers revalidate and get 304 while it is unchanged.</summary>
+    private static IResult Png((string Path, long Version)? file, HttpContext ctx)
+    {
+        if (file is not { } f) return Results.NotFound();
+        ctx.Response.Headers.CacheControl = "no-cache";
+        return Results.File(f.Path, "image/png", entityTag: new Microsoft.Net.Http.Headers.EntityTagHeaderValue($"\"{f.Version}\""));
+    }
+
     /// <summary>Maps exceptions to HTTP errors with a message the panel shows as is.</summary>
     private static async Task<IResult> Run(Func<Task<object?>> action)
     {
@@ -69,6 +82,25 @@ public static partial class Api
     public static void MapApi(this WebApplication app)
     {
         // ---------- auth ----------
+        // ---------- public (no login): the world map ----------
+        app.MapGet("/api/public/info", async (MapProxy map, AgentConfig config, HttpContext ctx) => Results.Ok(new
+        {
+            mode = "agent",
+            name = config.Server.Name,
+            language = config.Language,
+            admin = ctx.User.Identity?.IsAuthenticated == true,
+            secure = ctx.Request.IsHttps,
+            features,
+            map = await map.PublicInfoAsync(),
+        })).RequireRateLimiting("public");
+
+        app.MapGet("/api/public/map.png", async (MapProxy map, HttpContext ctx) => Png(await map.FileAsync("public"), ctx))
+            .RequireRateLimiting("public");
+
+        app.MapGet("/api/public/markers", async (MapProxy map) => Results.Ok(await map.MarkersAsync(admin: false) ?? new JsonObject()))
+            .RequireRateLimiting("public");
+
+        // ---------- auth ----------
         app.MapPost("/api/login", async (LoginBody body, HttpContext ctx, AgentConfig config, LoginGuard guard, Db db) =>
         {
             string who = Who(ctx);
@@ -86,7 +118,7 @@ public static partial class Api
                 new AuthenticationProperties { IsPersistent = true });
             db.Audit(who, "login");
             return Results.Ok(new { ok = true });
-        });
+        }).RequireRateLimiting("login");
 
         app.MapPost("/api/logout", async (HttpContext ctx) =>
         {
@@ -163,6 +195,38 @@ public static partial class Api
         }));
 
         api.MapGet("/console/commands", (AdminService admin) => Run(async () => await admin.GameCommandsAsync()));
+
+        // ---------- map (admin) ----------
+        api.MapGet("/map/full.png", async (MapProxy map, HttpContext ctx) => Png(await map.FileAsync("full"), ctx));
+
+        api.MapGet("/map/fog.png", async (MapProxy map, HttpContext ctx) => Png(await map.FileAsync("fog"), ctx));
+
+        api.MapGet("/map/markers", (MapProxy map) => Run(async () => await map.MarkersAsync(admin: true)));
+
+        api.MapGet("/map/info", (MapProxy map) => Run(async () => await map.InfoAsync()));
+
+        api.MapPost("/map/regen", (MapProxy map, HttpContext ctx, Db db) => Run(async () =>
+        {
+            db.Audit(Who(ctx), "map-regen");
+            return await map.CommandAsync("map_regen");
+        }));
+
+        api.MapPost("/map/pins", (PinBody body, MapProxy map, HttpContext ctx, Db db) => Run(async () =>
+        {
+            string label = (body.Label ?? "").Trim();
+            if (label.Length > 80) throw new ArgumentException("label");
+            db.Audit(Who(ctx), "map-pin", $"{label} ({body.X:0}, {body.Z:0})");
+            return await map.CommandAsync("map_pin_add", new JsonObject
+            {
+                ["x"] = body.X, ["z"] = body.Z, ["label"] = label, ["icon"] = body.Icon ?? "pin", ["public"] = body.Public,
+            });
+        }));
+
+        api.MapDelete("/map/pins/{id}", (string id, MapProxy map, HttpContext ctx, Db db) => Run(async () =>
+        {
+            db.Audit(Who(ctx), "map-pin-remove", id);
+            return await map.CommandAsync("map_pin_remove", new JsonObject { ["id"] = id });
+        }));
 
         // ---------- logs ----------
         api.MapGet("/logs", (LogTailer tailer, long? after, int? limit) =>

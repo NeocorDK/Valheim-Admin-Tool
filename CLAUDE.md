@@ -45,6 +45,7 @@ ValheimAdmin.Agent/            agent (net10.0, Microsoft.NET.Sdk.Web)
   Server/ServerManager.cs      owns valheim_server.exe: start, graceful stop (Ctrl+C helper), adopt running server, watchdog, duplicate detection, bridge admission
   Server/Scheduler.cs          daily restarts with in-game countdown, one-off restart, snapshot retention
   Server/Updater.cs            SteamCMD update with world+config backup
+  Server/MapProxy.cs           world map files and markers from the plugin, public + admin
   Server/AdminService.cs       players cache, item list, diff, restore orchestration, Epic Loot enrichment
   Server/CommandParser.cs      text console → (cmd, args) for the bridge
   Server/ConfigFiles.cs        BepInEx/config editor with backups; plugin DLL list
@@ -65,6 +66,7 @@ ValheimAdmin.Plugin/           plugin (net472)
   Json.cs                      minimal JSON (Dictionary<string,object>/List<object>/long/double) + typed getters
   Server/AgentLink.cs          TCP client to the agent (background thread), buffering of events
   Server/Commands.cs           agent command dispatcher (runs on Unity main thread)
+  Server/Map/                  MapService, MapGenerator, FogTracker, MapMarkers, Png (world map)
   Server/ServerRole.cs         modded peer registry, server→client requests with timeouts, snapshot rounds, heartbeat
   Server/Hooks.cs              Harmony patches → events (join/leave/save/chat/boss/globalkey/raid/death fallback), RPC registration
   ConsoleRunner.cs             runs game console commands with output capture and the cheat-check overrides (both roles)
@@ -215,9 +217,50 @@ mark a not-yet-cheated character (the panel asks the admin and resends with `con
 - Only mod-specific code: `EpicLootAdapter` reads Epic Loot's `MagicItemComponent` for rarity
   colours/effects in the panel (`AdminService.Enrich`). Nothing else depends on it.
 
+## World map (public landing page)
+
+- **Plugin** (`Server/Map/*`, server role only, started from `ServerRole.Update` once the world is loaded):
+  - `MapGenerator` samples `WorldGenerator.GetBiome/GetBiomeHeight` on a `TextureSize`² grid,
+    `PixelSize` m per pixel, centred on the origin (same grid as the game's minimap). Using the
+    game's world generator means world-gen mods are reflected. Colours: own natural palette per
+    biome (the minimap's `m_*Color` fields are shader keys, not display colours), water tinted by
+    depth under `m_waterLevel` 30, forest darkened, hill shading lit from the NW. Runs on a
+    background thread (`[Map] DrawInBackground`, else ~4 ms/frame on the main thread). Written by
+    `Png` (own encoder: works off the main thread and with `-nographics`). Cached by
+    seed|size|pixel|game version|hash of loaded plugin GUIDs in `map.json`; `map.rgb` keeps raw pixels.
+  - Rows are written **north first** (PNG top = +z). World → pixel: `x/PixelSize + size/2`.
+  - `FogTracker`: server-side explored bitmap (radius 100 m around each peer every 2 s,
+    `MapMarkers.PositionOf` = character ZDO position or `m_refPos`), saved to `fog.bin` on world
+    save. `RefreshPngs` writes `fog.png` and **`map-public.png` (map with unexplored areas painted
+    over)** on a thread pool thread, at most every 30 s — the public never receives the full map.
+  - `MapMarkers.Build(admin)`: players (public view honours the in-game "Visible on map"
+    `m_publicRefPos` unless `[Map] PublicPlayers`), portals (`ZDOMan.m_portalObjects`, tag from
+    `ZDOVars.s_tag`; modded portals included), location icons (`ZoneSystem.GetLocationIcons`,
+    the game's own icon rules), tombstones (admin only; `Player_tombstone` found with the game's
+    iterative sector scan, spread over frames, every 30 s), admin pins (`pins.json`). Public view
+    shows portals/locations only when enabled and only in explored areas.
+  - Bridge commands: `map_info`, `map_markers {admin}`, `map_regen`, `map_pin_add`, `map_pin_remove`.
+  - Files: `BepInEx/config/ValheimAdmin/map/<world>-<seed>/`.
+  - Config `[Map]`: `Enabled`, `TextureSize` (2048), `PixelSize` (12), `DrawInBackground`,
+    `PublicFog` (true), `PublicPlayers` (respect|all|none), `PublicPortals`, `PublicLocations`.
+- **Agent** (`Server/MapProxy.cs`): caches `map_info` (3 s) and keeps the last one so the map
+  survives server restarts; serves the PNGs the plugin reported (paths never leave the agent).
+  Anonymous: `/api/public/info` (mode, name, admin flag, features, map state),
+  `/api/public/map.png` (`map-public.png` when PublicFog), `/api/public/markers` (cached 2 s).
+  Admin: `/api/map/full.png`, `/api/map/fog.png`, `/api/map/markers`, `/api/map/info`,
+  `POST /api/map/regen`, `POST /api/map/pins`, `DELETE /api/map/pins/{id}`. Rate limits:
+  `login` 10/min/IP (plus LoginGuard lockout), `public` 300/min/IP.
+- **Panel**: no login screen any more. `#map` is the default tab for everybody; the sidebar has
+  "Admin sign-in" (dialog, warns on plain HTTP outside localhost/Tailscale). After sign-in the
+  admin tabs from `features` appear. `views.map` uses Leaflet 1.9.4 (vendored in
+  `web/vendor/leaflet`, BSD-2) with `CRS.Simple`, lat = z, lng = x in metres; markers polled
+  every 3 s; admin: layer toggles, explored overlay, redraw, right-click to add a pin.
+  Views may return `{live, dispose}`; `route()` calls `dispose` (the map removes its timers).
+- HTTPS (optional, agent): `Https.Port` + `Https.CertificatePath` (PFX) + `Https.CertificatePassword`.
+
 ## Web panel
 
-- `web/app.js`: tiny `h()` DOM helper, `api()` fetch wrapper (401 → login screen), views
+- `web/app.js`: tiny `h()` DOM helper, `api()` fetch wrapper (401 → back to the public map + sign-in dialog), views
   registered in `views.*` and routed by `location.hash`, live updates over `/ws`.
   Tabs: overview, console, events, players, characters (snapshots), configs, maintenance.
 - `web/i18n.js`: `t(key, ...args)`, en/ru dictionaries; `MiscTests.EveryKeyHasBothLanguages`
@@ -251,7 +294,7 @@ Agent (net10):
 
 `agent.json` (next to the exe): see README "agent.json reference". Plugin config
 `BepInEx/config/neocor.ValheimAdmin.cfg`: `[Server] AgentPort`, `AgentSecretFile`;
-`[Client] AllowServerCommands`, `AllowRestore`; `[General] Debug`.
+`[Client] AllowServerCommands`, `AllowRestore`; `[General] Debug`; `[Map] ...` (see World map).
 
 ## Data folder (agent)
 

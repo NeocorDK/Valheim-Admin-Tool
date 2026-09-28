@@ -210,6 +210,15 @@ namespace ValheimAdmin
         {
             if (!IsServer) return;
 
+            try
+            {
+                MapService.Update();
+            }
+            catch (Exception e)
+            {
+                BepInExPlugin.Dbgl("Map update failed: " + e.Message);
+            }
+
             float now = Time.realtimeSinceStartup;
             if (pending.Count > 0)
             {

@@ -37,7 +37,7 @@ async function api(path, { method = 'GET', body } = {}) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: 'same-origin',
   });
-  if (res.status === 401 && path !== '/login') { showLogin(); throw new Error(t('err.auth')); }
+  if (res.status === 401 && path !== '/login') { onUnauthorized(); throw new Error(t('err.auth')); }
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
@@ -95,6 +95,7 @@ function richText(text) {
 }
 
 const ICONS = {
+  map: 'M9 4 3 6v14l6-2 6 2 6-2V4l-6 2zm0 0v14m6-12v14',
   overview: 'M3 13h8V3H3zm0 8h8v-6H3zm10 0h8V11h-8zm0-18v6h8V3z',
   console: 'M4 5h16v14H4zm2 3 4 4-4 4m6 0h6',
   events: 'M12 8v5l3 2m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
@@ -188,6 +189,8 @@ const state = {
   logs: [],
   logSeq: 0,
   gameCommands: null,
+  admin: false,
+  info: null,
 };
 const liveHandlers = new Set();
 
@@ -253,7 +256,7 @@ function connectLive() {
   socket.onopen = () => $('#live-indicator').classList.add('on');
   socket.onclose = () => {
     $('#live-indicator').classList.remove('on');
-    reconnectTimer = setTimeout(connectLive, 3000);
+    if (state.admin) reconnectTimer = setTimeout(connectLive, 3000);
   };
   socket.onmessage = e => {
     const msg = JSON.parse(e.data);
@@ -1022,30 +1025,214 @@ views.maintenance = {
   },
 };
 
+// ---- map (public landing page; admins see everything)
+const LOCATION_NAMES = {
+  StartTemple: 'Sacrificial stones', Eikthyrnir: 'Eikthyr', GDKing: 'The Elder', Bonemass: 'Bonemass', Dragonqueen: 'Moder',
+  GoblinKing: 'Yagluth', Mistlands_DvergrBossEntrance1: 'The Queen', FaderLocation: 'Fader', Vendor_BlackForest: 'Haldor',
+  Hildir_camp: 'Hildir', BogWitch_Camp: 'Bog Witch',
+};
+const BOSS_LOCATIONS = ['Eikthyrnir', 'GDKing', 'Bonemass', 'Dragonqueen', 'GoblinKing', 'Mistlands_DvergrBossEntrance1', 'FaderLocation'];
+const locationName = n => LOCATION_NAMES[n] || n.replace(/_/g, ' ');
+const locationKind = n => BOSS_LOCATIONS.includes(n) ? 'boss' : /vendor|hildir|witch|trader/i.test(n) ? 'trader' : n === 'StartTemple' ? 'start' : 'loc';
+const MAP_GLYPHS = { portal: '◆', boss: '☠', trader: '¤', start: '✦', loc: '•', tomb: '✝', pin: '⚑' };
+
+/** Fetch for the public endpoints: never opens the login dialog. */
+async function publicGet(path) {
+  const res = await fetch(path, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+views.map = {
+  icon: 'map',
+  mount(root) {
+    root.classList.add('view-map');
+    const admin = !!state.admin;
+    const el = h('div', { class: 'map' });
+    const statusEl = h('div', { class: 'map-status', hidden: true });
+    const coordsEl = h('div', { class: 'map-coords mono' });
+    const layersEl = h('div', { class: 'map-layers' });
+    root.append(h('div', { class: 'map-wrap' }, el, statusEl, coordsEl, layersEl));
+
+    const map = L.map(el, { crs: L.CRS.Simple, minZoom: -6, maxZoom: 3, zoomSnap: 0.25, zoomDelta: 0.5, attributionControl: false });
+    const ll = (x, z) => L.latLng(z, x);
+    const groups = { players: L.layerGroup(), pins: L.layerGroup(), portals: L.layerGroup(), locations: L.layerGroup(), tombstones: L.layerGroup() };
+    let hiddenLayers;
+    try { hiddenLayers = new Set(JSON.parse(localStorage.getItem('va_map_hidden') || '[]')); } catch { hiddenLayers = new Set(); }
+    for (const [k, g] of Object.entries(groups)) if (!hiddenLayers.has(k)) g.addTo(map);
+
+    let overlay = null, fogOverlay = null, bounds = null, fitted = false, info = null, markers = {};
+    const glyph = kind => L.divIcon({ className: 'mk mk-' + kind, html: MAP_GLYPHS[kind] || '•', iconSize: [20, 20], iconAnchor: [10, 10] });
+
+    const readInfo = async () => {
+      if (admin) {
+        const i = await api('/map/info');
+        return { ...i, hasMap: !!i.mapFile, version: i.mapVersion, url: '/api/map/full.png' };
+      }
+      const r = await publicGet('/api/public/info');
+      return { ...(r.map || {}), url: '/api/public/map.png' };
+    };
+
+    const statusText = i => {
+      if (!i) return t('map.offline');
+      if (i.enabled === false) return t('map.disabled');
+      if (i.state === 'generating') return t('map.drawing', Math.round((i.progress || 0) * 100));
+      if (i.state === 'failed') return t('map.failed', i.error || '');
+      if (!i.hasMap) return i.online === false || i.state === 'offline' || i.state === 'waiting' ? t('map.offline') : t('map.preparing');
+      return i.online === false ? t('map.serverDown') : '';
+    };
+
+    const showImage = i => {
+      const R = i.size * i.pixelSize / 2;
+      bounds = L.latLngBounds(ll(-R, -R), ll(R, R));
+      const url = `${i.url}?v=${i.version}`;
+      if (!overlay) overlay = L.imageOverlay(url, bounds, { className: 'map-image' }).addTo(map).bringToBack();
+      else if (overlay._url !== url) overlay.setUrl(url);
+      if (!fitted) {
+        fitted = true;
+        let saved = null;
+        try { saved = JSON.parse(localStorage.getItem('va_map_view') || 'null'); } catch { }
+        if (saved) map.setView(saved.c, saved.z); else map.fitBounds(bounds.pad(-0.12));
+        map.setMaxBounds(bounds.pad(0.15));
+      }
+    };
+
+    const refreshInfo = async () => {
+      try { info = await readInfo(); } catch { info = null; }
+      const text = statusText(info);
+      statusEl.textContent = text;
+      statusEl.hidden = !text;
+      if (info?.hasMap) showImage(info);
+      renderLayers();
+    };
+
+    const drawMarkers = data => {
+      markers = data || {};
+      for (const g of Object.values(groups)) g.clearLayers();
+      for (const p of markers.players || []) {
+        L.circleMarker(ll(p.x, p.z), { radius: 6, className: 'mk-player' + (admin && p.public === false ? ' private' : ''), weight: 2 })
+          .bindTooltip(p.name + (admin && p.public === false ? ' · ' + t('map.privatePlayer') : ''), { permanent: true, direction: 'right', offset: [8, 0], className: 'mk-label' })
+          .addTo(groups.players);
+      }
+      for (const p of markers.portals || [])
+        L.marker(ll(p.x, p.z), { icon: glyph('portal') }).bindTooltip(p.tag || t('map.portal')).addTo(groups.portals);
+      for (const l of markers.locations || [])
+        L.marker(ll(l.x, l.z), { icon: glyph(locationKind(l.name)) }).bindTooltip(locationName(l.name)).addTo(groups.locations);
+      for (const s of markers.tombstones || [])
+        L.marker(ll(s.x, s.z), { icon: glyph('tomb') }).bindTooltip(t('map.tombstone', s.owner || '?'))
+          .on('click', () => { location.hash = '#characters'; }).addTo(groups.tombstones);
+      for (const p of markers.pins || []) {
+        const m = L.marker(ll(p.x, p.z), { icon: glyph('pin') });
+        if (p.label) m.bindTooltip(p.label, { permanent: true, direction: 'right', offset: [8, 0], className: 'mk-label pin' });
+        if (admin) m.on('click', () => removePin(p));
+        m.addTo(groups.pins);
+      }
+      renderLayers();
+    };
+
+    const refreshMarkers = async () => {
+      if (document.hidden) return;
+      try { drawMarkers(admin ? await api('/map/markers') : await publicGet('/api/public/markers')); } catch { }
+    };
+
+    const setFog = on => {
+      if (on && !fogOverlay && bounds && info) fogOverlay = L.imageOverlay(`/api/map/fog.png?v=${info.fogVersion}`, bounds, { opacity: 0.55 }).addTo(map);
+      if (!on && fogOverlay) { fogOverlay.remove(); fogOverlay = null; }
+    };
+
+    const renderLayers = () => {
+      const available = Object.keys(groups).filter(k => k === 'players' || k === 'pins' || markers[k] !== undefined);
+      fill(layersEl,
+        h('div', { class: 'map-layers-title', text: t('map.layers') }),
+        available.map(k => h('label', { class: 'check' },
+          h('input', { type: 'checkbox', checked: !hiddenLayers.has(k), onchange: e => {
+            if (e.target.checked) { hiddenLayers.delete(k); groups[k].addTo(map); } else { hiddenLayers.add(k); groups[k].remove(); }
+            try { localStorage.setItem('va_map_hidden', JSON.stringify([...hiddenLayers])); } catch { }
+          } }),
+          `${t('map.' + k)} (${(markers[k] || []).length})`)),
+        admin ? [
+          h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!fogOverlay, onchange: e => setFog(e.target.checked) }), t('map.explored')),
+          h('button', { class: 'btn small', text: t('map.regen'), onclick: regen }),
+          h('p', { class: 'note', text: t('map.pinHint') }),
+        ] : null);
+    };
+
+    const regen = async () => {
+      if (!await confirmDialog(t('map.regen'), t('map.regenConfirm'), t('btn.yes'))) return;
+      try { await api('/map/regen', { method: 'POST' }); fitted = true; refreshInfo(); } catch (e) { fail(e); }
+    };
+
+    const addPin = async latlng => {
+      const v = await formDialog(t('map.pinAdd'), [
+        { name: 'label', label: t('map.pinLabel'), placeholder: t('map.pinPlaceholder') },
+        { name: 'public', label: t('map.pinPublic'), type: 'checkbox', value: true },
+      ], t('btn.add'));
+      if (!v) return;
+      try {
+        await api('/map/pins', { method: 'POST', body: { x: latlng.lng, z: latlng.lat, label: v.label, public: v.public } });
+        refreshMarkers();
+      } catch (e) { fail(e); }
+    };
+
+    const removePin = async p => {
+      if (!await confirmDialog(t('map.pinDelete'), p.label || '', t('btn.remove'), true)) return;
+      try { await api('/map/pins/' + encodeURIComponent(p.id), { method: 'DELETE' }); refreshMarkers(); } catch (e) { fail(e); }
+    };
+
+    map.on('mousemove', e => { coordsEl.textContent = `x ${Math.round(e.latlng.lng)} · z ${Math.round(e.latlng.lat)}`; });
+    map.on('moveend', () => { try { localStorage.setItem('va_map_view', JSON.stringify({ c: map.getCenter(), z: map.getZoom() })); } catch { } });
+    if (admin) map.on('contextmenu', e => addPin(e.latlng));
+
+    refreshInfo();
+    refreshMarkers();
+    const markerTimer = setInterval(refreshMarkers, 3000);
+    const infoTimer = setInterval(refreshInfo, 10000);
+    return {
+      dispose() {
+        clearInterval(markerTimer);
+        clearInterval(infoTimer);
+        map.remove();
+      },
+    };
+  },
+};
+
 // ---------------------------------------------------------------- shell
 
-const ORDER = ['overview', 'console', 'events', 'players', 'characters', 'configs', 'maintenance'];
+const ADMIN_ORDER = ['overview', 'console', 'events', 'players', 'characters', 'configs', 'maintenance'];
+
+/** The map for everybody; the admin sections the backend offers once signed in. */
+function tabs() {
+  const features = state.info?.features || ['map'];
+  return ['map', ...(state.admin ? ADMIN_ORDER.filter(n => features.includes(n)) : [])];
+}
 
 function renderNav() {
   const tab = currentTab();
-  fill($('#nav'), ORDER.map(name => h('a', { href: '#' + name, class: name === tab ? 'active' : '' },
+  fill($('#nav'), tabs().map(name => h('a', { href: '#' + name, class: name === tab ? 'active' : '' },
     icon(views[name].icon), h('span', { text: t('nav.' + name) }))));
 }
 
 function currentTab() {
   const name = location.hash.slice(1);
-  return ORDER.includes(name) ? name : 'overview';
+  return tabs().includes(name) ? name : 'map';
 }
 
+let currentDispose = null;
 function route() {
   if (current) liveHandlers.delete(current);
   current = null;
+  if (currentDispose) { try { currentDispose(); } catch (e) { console.error(e); } currentDispose = null; }
   const name = currentTab();
   renderNav();
   const root = clear($('#view'));
-  document.title = t('nav.' + name) + ' · Valheim Admin';
-  const handler = views[name].mount(root);
-  if (handler) { current = handler; liveHandlers.add(handler); }
+  root.className = 'view';
+  document.title = t('nav.' + name) + ' · ' + (state.info?.name || 'Valheim Admin');
+  // A view returns its live-update handler, or {live, dispose}.
+  const result = views[name].mount(root);
+  const live = typeof result === 'function' ? result : result?.live;
+  currentDispose = typeof result === 'object' && result ? result.dispose || null : null;
+  if (live) { current = live; liveHandlers.add(live); }
 }
 
 function renderLangSwitches() {
@@ -1053,16 +1240,46 @@ function renderLangSwitches() {
     h('button', { type: 'button', class: l === lang() ? 'on' : '', text: l.toUpperCase(), onclick: () => { localStorage.setItem('va_lang', l); setLang(l); } }))));
 }
 
+function setAdmin(on) {
+  state.admin = on;
+  $('#login-btn').hidden = on;
+  $('#logout').hidden = !on;
+  $('#topbar').hidden = !on;
+  if (!on) { clearTimeout(reconnectTimer); socket?.close(); }
+}
+
+/** Plain HTTP to a non-local, non-Tailscale address: the password would travel unencrypted. */
+function insecureConnection() {
+  return location.protocol !== 'https:' &&
+    !/^(localhost|127\.|\[::1\]|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(location.hostname);
+}
+
 function showLogin() {
-  $('#app').hidden = true;
-  $('#login').hidden = false;
-  socket?.close();
+  const dlg = $('#login-dialog');
+  $('#login-error').hidden = true;
+  $('#login-insecure').hidden = !insecureConnection();
+  if (!dlg.open) dlg.showModal();
   $('#login-password').focus();
 }
 
-async function startApp() {
-  $('#login').hidden = true;
-  $('#app').hidden = false;
+/** A request came back 401: the session ended. Back to the public map, and offer to sign in. */
+function onUnauthorized() {
+  if (state.admin) {
+    setAdmin(false);
+    route();
+  }
+  showLogin();
+}
+
+async function loadInfo() {
+  try { state.info = await publicGet('/api/public/info'); } catch { state.info = state.info || null; }
+  if (state.info?.name) $('#brand-name').textContent = state.info.name;
+  return state.info;
+}
+
+async function startAdmin() {
+  setAdmin(true);
+  await loadInfo();
   try { state.status = await api('/status'); } catch (e) { fail(e); }
   renderTopbar();
   playersDatalist();
@@ -1077,30 +1294,36 @@ $('#login-form').addEventListener('submit', async e => {
   try {
     await api('/login', { method: 'POST', body: { password: $('#login-password').value } });
     $('#login-password').value = '';
-    startApp();
+    $('#login-dialog').close();
+    startAdmin();
   } catch (ex) {
     err.textContent = ex.message;
     err.hidden = false;
   }
 });
-$('#logout').addEventListener('click', async () => { await api('/logout', { method: 'POST' }).catch(() => {}); showLogin(); });
+$('#login-cancel').addEventListener('click', () => $('#login-dialog').close());
+$('#login-btn').addEventListener('click', showLogin);
+$('#logout').addEventListener('click', async () => {
+  await api('/logout', { method: 'POST' }).catch(() => {});
+  setAdmin(false);
+  location.hash = '#map';
+  route();
+});
 window.addEventListener('hashchange', route);
 liveHandlers.add(msg => { if (msg.type === 'players') playersDatalist(); });
 
 onLangChange(() => {
   applyStatic();
   renderLangSwitches();
-  if (!$('#app').hidden) { renderTopbar(); route(); }
+  if (state.admin) renderTopbar();
+  route();
 });
 
 (async () => {
   applyStatic();
   renderLangSwitches();
-  try {
-    const me = await api('/me');
-    if (!localStorage.getItem('va_lang') && me.language) setLang(me.language);
-    startApp();
-  } catch {
-    showLogin();
-  }
+  const info = await loadInfo();
+  if (!localStorage.getItem('va_lang') && info?.language) setLang(info.language);
+  if (info?.admin) startAdmin();
+  else { setAdmin(false); route(); }
 })();

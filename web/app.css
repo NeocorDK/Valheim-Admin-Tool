@@ -271,6 +271,46 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .configs { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
 .editor { width: 100%; min-height: calc(100vh - 260px); font: 12.5px/1.5 var(--mono); resize: vertical; white-space: pre; }
 
+/* ---------- map ---------- */
+main { min-height: 100vh; }
+.view.view-map { padding: 0; flex: 1; }
+.map-wrap { position: relative; flex: 1; min-height: 420px; }
+.map { position: absolute; inset: 0; }
+.leaflet-container { background: #15181c; font: inherit; }
+.map-image { image-rendering: auto; }
+.map-status {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 500;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px;
+  box-shadow: var(--shadow); font-size: 13px; white-space: nowrap;
+}
+.map-coords:empty { display: none; }
+.map-coords {
+  position: absolute; left: 10px; bottom: 10px; z-index: 500; font-size: 12px;
+  background: color-mix(in srgb, var(--surface) 85%, transparent); border-radius: 6px; padding: 3px 8px;
+}
+.map-layers {
+  position: absolute; right: 10px; top: 10px; z-index: 500; display: flex; flex-direction: column; gap: 6px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); font-size: 13px; max-width: 220px;
+}
+.map-layers-title { font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.map-layers .note { margin: 0; }
+.mk { display: grid; place-items: center; font-size: 15px; line-height: 1; color: #fff; text-shadow: 0 0 3px #000, 0 0 2px #000; }
+.mk-portal { color: #c58bff; }
+.mk-boss { color: #ff6b5e; font-size: 17px; }
+.mk-trader { color: #ffd166; font-size: 17px; }
+.mk-start { color: #9ee7ff; }
+.mk-tomb { color: #e8e8e8; cursor: pointer; }
+.mk-pin { color: #ffb347; cursor: pointer; }
+path.mk-player { stroke: #fff; fill: #ffb000; fill-opacity: 1; }
+path.mk-player.private { stroke-dasharray: 3 2; fill: #9aa3ad; }
+.leaflet-tooltip.mk-label {
+  background: rgb(15 17 20 / .72); color: #fff; border: 0; box-shadow: none; padding: 1px 6px; font-weight: 600;
+}
+.leaflet-tooltip.mk-label::before { display: none; }
+.leaflet-tooltip.mk-label.pin { color: #ffd9a6; font-weight: 500; }
+.warn-note { color: var(--warn); }
+
 /* ---------- login ---------- */
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login-card {
@@ -308,6 +348,8 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .sidebar-foot { margin-left: auto; }
   .topbar { position: static; padding: 10px 16px; }
   .view { padding: 16px; }
+  .map-wrap { min-height: calc(100vh - 110px); }
+  .map-layers { max-width: 170px; font-size: 12px; padding: 8px 10px; }
   .grid-2, .grid-3, .chars, .configs { grid-template-columns: minmax(0, 1fr); }
   .chars > :last-child { grid-column: auto; }
   .ev { grid-template-columns: 1fr; gap: 2px; }

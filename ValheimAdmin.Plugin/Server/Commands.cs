@@ -171,7 +171,10 @@ namespace ValheimAdmin
                     return;
 
                 default:
-                    Fail(id, "Unknown command: " + cmd);
+                    if (MapService.Handle(cmd, args, out object mapResult))
+                        Ok(id, mapResult);
+                    else
+                        Fail(id, "Unknown command: " + cmd);
                     return;
             }
         }

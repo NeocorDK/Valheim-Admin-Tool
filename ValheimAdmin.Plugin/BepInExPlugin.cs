@@ -38,6 +38,15 @@ namespace ValheimAdmin
         public static ConfigEntry<bool> AllowRestore;
         public static ConfigEntry<bool> IsDebug;
 
+        public static ConfigEntry<bool> MapEnabled;
+        public static ConfigEntry<int> MapTextureSize;
+        public static ConfigEntry<float> MapPixelSize;
+        public static ConfigEntry<bool> MapDrawInBackground;
+        public static ConfigEntry<bool> MapPublicFog;
+        public static ConfigEntry<string> MapPublicPlayers;
+        public static ConfigEntry<bool> MapPublicPortals;
+        public static ConfigEntry<bool> MapPublicLocations;
+
         public static void Log(string str)
         {
             if (logger != null)
@@ -70,6 +79,21 @@ namespace ValheimAdmin
             AllowRestore = Config.Bind("Client", "AllowRestore", true,
                 "Let the server admin restore items and skills of this character from a snapshot.");
             IsDebug = Config.Bind("General", "Debug", false, "Verbose logging.");
+
+            MapEnabled = Config.Bind("Map", "Enabled", true,
+                "Draw the world map on the dedicated server for the web panel. The admin always sees the whole map, also with the nomap world key.");
+            MapTextureSize = Config.Bind("Map", "TextureSize", 2048,
+                "Map picture size in pixels (power of two). With PixelSize 12 the default covers the vanilla world; raise it for worlds enlarged by mods.");
+            MapPixelSize = Config.Bind("Map", "PixelSize", 12f, "Metres per map pixel (the game's minimap uses 12).");
+            MapDrawInBackground = Config.Bind("Map", "DrawInBackground", true,
+                "Draw the map on a background thread. Turn off if a world generation mod misbehaves; it is then drawn a few milliseconds per frame.");
+            MapPublicFog = Config.Bind("Map", "PublicFog", true,
+                "The public map (no login) shows only areas that players have been near. The admin sees everything.");
+            MapPublicPlayers = Config.Bind("Map", "PublicPlayers", "respect",
+                new ConfigDescription("Players on the public map: respect = only those with \"Visible on map\" on in the game, all, none.",
+                    new AcceptableValueList<string>("respect", "all", "none")));
+            MapPublicPortals = Config.Bind("Map", "PublicPortals", false, "Show portals (with their tags) on the public map, in explored areas.");
+            MapPublicLocations = Config.Bind("Map", "PublicLocations", false, "Show location icons (bosses, traders, start) on the public map, in explored areas.");
 
             new Harmony(pluginGuid).PatchAll(typeof(BepInExPlugin).Assembly);
             AgentLink.Start();

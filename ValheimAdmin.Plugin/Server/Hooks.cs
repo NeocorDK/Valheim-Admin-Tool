@@ -91,6 +91,7 @@ namespace ValheimAdmin
             private static void Postfix()
             {
                 if (!ServerRole.IsServer) return;
+                MapService.Save();
                 int players = ServerRole.SuppressSaveSnapshots ? 0 : ServerRole.SnapshotAll("save");
                 AgentLink.Event("save", new Dictionary<string, object> { { "snapshots", players } });
             }
