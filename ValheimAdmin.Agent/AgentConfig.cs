@@ -190,25 +190,5 @@ public sealed class AgentConfig
     }
 
     /// <summary>Splits on spaces, keeping "quoted parts" together.</summary>
-    public static List<string> SplitArgs(string text)
-    {
-        var result = new List<string>();
-        var current = new System.Text.StringBuilder();
-        bool quoted = false, any = false;
-        foreach (char c in text ?? "")
-        {
-            if (c == '"') { quoted = !quoted; any = true; continue; }
-            if (char.IsWhiteSpace(c) && !quoted)
-            {
-                if (any) result.Add(current.ToString());
-                current.Clear();
-                any = false;
-                continue;
-            }
-            current.Append(c);
-            any = true;
-        }
-        if (any) result.Add(current.ToString());
-        return result;
-    }
+    public static List<string> SplitArgs(string text) => Shared.ConsoleLine.SplitArgs(text);
 }

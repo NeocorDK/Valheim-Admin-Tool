@@ -8,27 +8,14 @@ namespace ValheimAdmin.Agent;
 /// </summary>
 public static class I18n
 {
-    public static string Language { get; set; } = "en";
+    public static string Language
+    {
+        get => Shared.EventText.Language;
+        set => Shared.EventText.Language = value;
+    }
 
     private static readonly Dictionary<string, (string En, string Ru)> texts = new()
     {
-        // events
-        ["join"] = ("{0} joined the server", "{0} зашёл на сервер"),
-        ["leave"] = ("{0} left the server", "{0} вышел с сервера"),
-        ["death"] = ("{0} died: {1}", "{0} погиб: {1}"),
-        ["chat.shout"] = ("(shout) ", "(крик) "),
-        ["chat.whisper"] = ("(whisper) ", "(шёпот) "),
-        ["boss"] = ("Boss defeated: {0}", "Побеждён босс: {0}"),
-        ["globalkey"] = ("Global key set: {0}", "Глобальный ключ: {0}"),
-        ["raid"] = ("Raid: {0}", "Набег: {0}"),
-        ["raid.near"] = ("Raid: {0} (near {1})", "Набег: {0} (рядом с {1})"),
-        ["raid_end"] = ("Raid ended: {0}", "Набег закончился: {0}"),
-        ["save"] = ("World saved", "Мир сохранён"),
-        ["save.snapshots"] = ("World saved, snapshots requested: {0}", "Мир сохранён, запрошено слепков: {0}"),
-        ["started"] = ("World \"{0}\" loaded", "Мир «{0}» загружен"),
-        ["stopping"] = ("Server is saving the world and shutting down", "Сервер сохраняет мир и выключается"),
-        ["restore"] = ("{0}: restored from snapshot #{1} — items {2}, dropped {3}, skills {4}", "{0}: восстановление из слепка №{1} — предметов {2}, на землю {3}, навыков {4}"),
-
         // server lifecycle
         ["server.starting"] = ("Server is starting ({0})", "Сервер запускается ({0})"),
         ["server.stopping"] = ("Server is stopping ({0})", "Сервер останавливается ({0})"),
@@ -75,62 +62,23 @@ public static class I18n
         ["update.done"] = ("Server update finished (build {0} → {1})", "Обновление сервера завершено (сборка {0} → {1})"),
         ["update.failed"] = ("Server update failed: {0}", "Обновление сервера не удалось: {0}"),
 
-        // configs
-        ["config.saved"] = ("Config saved: {0} (applies after restart)", "Конфиг сохранён: {0} (применится после рестарта)"),
-
-        // death causes (HitData.HitType)
-        ["cause.EnemyHit"] = ("killed by an enemy", "убит врагом"),
-        ["cause.PlayerHit"] = ("killed by a player", "убит игроком"),
-        ["cause.Fall"] = ("fall", "падение"),
-        ["cause.Drowning"] = ("drowned", "утонул"),
-        ["cause.Burning"] = ("burned", "сгорел"),
-        ["cause.Freezing"] = ("froze", "замёрз"),
-        ["cause.Poisoned"] = ("poison", "отравление"),
-        ["cause.Water"] = ("water", "вода"),
-        ["cause.Smoke"] = ("smoke", "задохнулся в дыму"),
-        ["cause.EdgeOfWorld"] = ("edge of the world", "край мира"),
-        ["cause.Impact"] = ("impact", "удар"),
-        ["cause.Cart"] = ("cart", "телега"),
-        ["cause.Tree"] = ("tree", "дерево"),
-        ["cause.Self"] = ("self", "сам себя"),
-        ["cause.Structural"] = ("collapse", "обрушение"),
-        ["cause.Turret"] = ("turret", "турель"),
-        ["cause.Boat"] = ("boat", "лодка"),
-        ["cause.Stalagtite"] = ("stalactite", "сталактит"),
-        ["cause.Catapult"] = ("catapult", "катапульта"),
-        ["cause.CinderFire"] = ("cinder fire", "пепельный огонь"),
-        ["cause.AshlandsOcean"] = ("boiling ocean", "кипящий океан"),
-        ["cause.AshlandsLava"] = ("lava", "лава"),
-        ["cause.Incinerator"] = ("obliterator", "мусоросжигатель"),
-        ["cause.DrawBridge"] = ("drawbridge", "подъёмный мост"),
-        ["cause.unknown"] = ("unknown cause", "причина неизвестна"),
-
-        // bosses
-        ["boss.defeated_eikthyr"] = ("Eikthyr", "Эйктюр"),
-        ["boss.defeated_gdking"] = ("The Elder", "Древний"),
-        ["boss.defeated_bonemass"] = ("Bonemass", "Масса костей"),
-        ["boss.defeated_dragon"] = ("Moder", "Модер"),
-        ["boss.defeated_goblinking"] = ("Yagluth", "Яглут"),
-        ["boss.defeated_queen"] = ("The Queen", "Королева"),
-        ["boss.defeated_fader"] = ("Fader", "Фейдер"),
     };
 
+    /// <summary>Agent texts, then the event-log texts shared with the plugin (<see cref="Shared.EventText"/>).</summary>
     public static string T(string key, params object?[] args)
     {
-        if (!texts.TryGetValue(key, out var t)) return key;
+        if (!texts.TryGetValue(key, out var t)) return Shared.EventText.T(key, args!);
         string format = Language == "ru" ? t.Ru : t.En;
         return args.Length == 0 ? format : string.Format(CultureInfo.InvariantCulture, format, args);
     }
 
-    public static bool Has(string key) => texts.ContainsKey(key);
+    public static bool Has(string key) => texts.ContainsKey(key) || Shared.EventText.Has(key);
 
-    public static string DeathCause(string? hitType) =>
-        !string.IsNullOrEmpty(hitType) && Has("cause." + hitType) ? T("cause." + hitType) :
-        string.IsNullOrEmpty(hitType) || hitType is "unknown" or "Unknown" or "Undefined" ? T("cause.unknown") : hitType;
+    public static string DeathCause(string? hitType) => Shared.EventText.DeathCause(hitType);
 
-    public static string BossName(string? key) =>
-        key != null && Has("boss." + key.ToLowerInvariant()) ? T("boss." + key.ToLowerInvariant()) : key ?? "?";
+    public static string BossName(string? key) => Shared.EventText.BossName(key);
 
     /// <summary>Every key must have both translations; used by tests.</summary>
-    public static IEnumerable<(string Key, string En, string Ru)> All() => texts.Select(kv => (kv.Key, kv.Value.En, kv.Value.Ru));
+    public static IEnumerable<(string Key, string En, string Ru)> All() =>
+        texts.Select(kv => (kv.Key, kv.Value.En, kv.Value.Ru)).Concat(Shared.EventText.All());
 }

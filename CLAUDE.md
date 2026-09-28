@@ -47,23 +47,24 @@ ValheimAdmin.Agent/            agent (net10.0, Microsoft.NET.Sdk.Web)
   Server/Updater.cs            SteamCMD update with world+config backup
   Server/MapProxy.cs           world map files and markers from the plugin, public + admin
   Server/AdminService.cs       players cache, item list, diff, restore orchestration, Epic Loot enrichment
-  Server/CommandParser.cs      text console → (cmd, args) for the bridge
+  Server/CommandParser.cs      wrapper over Common ConsoleLine
   Server/ConfigFiles.cs        BepInEx/config editor with backups; plugin DLL list
   Server/EventService.cs       plugin events → events table + live push; stores snapshots
-  Snapshots/SnapshotLogic.cs   pure functions: content hash, diff, retention, restore payload, Epic Loot parse
+  Snapshots/SnapshotLogic.cs   JsonNode wrapper over Common SnapshotRules (records for API/tests)
   Snapshots/SnapshotStore.cs   dedup storage (snapshot_data by hash, deflated JSON)
-  Snapshots/EpicLootAdapter.cs optional Epic Loot rarity/effects for the panel
   Snapshots/IconStore.cs       item icon cache (icons table), fetched from players' games
   Web/Api.cs                   every HTTP route
   Web/LiveHub.cs               WebSocket broadcast (status, log, event, players, snapshot)
   Web/StatusPump.cs            status every 2 s; StatusBuilder; LoginGuard (5 fails → 10 min lock per IP)
+ValheimAdmin.Common/           logic shared by agent and plugin, compiled into both (csproj Compile Link), net472-safe C#,
+                               Dictionary/List JSON model: Json.cs, ConsoleLine (console parser), SnapshotRules
+                               (hash/diff/retention/restore payload, EpicLoot adapter), EventText (event-log texts en/ru)
 web/                           panel: vanilla JS ES modules, no build step (index.html, app.js, app.css, i18n.js);
                                the agent copies it to wwwroot/ (csproj Content link), the plugin will embed it
 ValheimAdmin.Agent.Tests/      xUnit: SnapshotLogicTests, MiscTests (parser, log levels, i18n, config, store, scheduler)
 ValheimAdmin.Plugin/           plugin (net472)
   BepInExPlugin.cs             entry point, config entries, Update() pumps MainThread + ServerRole
   Protocol.cs                  RPC names (Rpc.*), deflate helpers, MainThread queue
-  Json.cs                      minimal JSON (Dictionary<string,object>/List<object>/long/double) + typed getters
   Server/AgentLink.cs          TCP client to the agent (background thread), buffering of events
   Server/Commands.cs           agent command dispatcher (runs on Unity main thread)
   Server/Map/                  MapService, MapGenerator, FogTracker, MapMarkers, Png (world map)
@@ -315,3 +316,10 @@ both sides; set `[General] Debug = true` for verbose plugin logs.
 - Items from mods that keep state outside the item itself (neither `m_customData` nor the item bytes) may not restore completely.
 - `ZNet.IsDedicated()` gates the server role; a listen-server host gets neither role's server side.
 - Snapshots of players without the mod are impossible (data is client-side).
+
+## Shared code rules
+
+- Files in `ValheimAdmin.Common` compile for net10 **and** net472 (Unity Mono): no records, ranges, `GetValueOrDefault`,
+  `DateOnly`, `SHA256.HashData`, `Convert.ToHexString`; start each file with `#nullable disable`.
+- The agent converts JsonNode ↔ Dictionary with `JsonCompat` (via JSON text). Agent tests exercise the shared code through
+  the wrappers, so keep wrapper signatures stable.

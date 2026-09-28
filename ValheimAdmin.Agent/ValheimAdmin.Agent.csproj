@@ -23,6 +23,11 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
+  <!-- Logic shared with the plugin, compiled into both. -->
+  <ItemGroup>
+    <Compile Include="..\ValheimAdmin.Common\**\*.cs" Link="Common\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="ValheimAdmin.Agent.Tests" />
     <!-- The panel lives in ..\web (the plugin embeds the same files). The agent serves it from

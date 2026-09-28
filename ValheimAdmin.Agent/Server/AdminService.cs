@@ -140,14 +140,5 @@ public sealed class AdminService
     }
 
     /// <summary>Adds what optional adapters know about an item (Epic Loot rarity and effects) for the panel.</summary>
-    public static JsonObject Enrich(JsonObject snapshot)
-    {
-        foreach (var item in SnapshotLogic.Items(snapshot).OfType<JsonObject>())
-        {
-            var magic = SnapshotLogic.Magic(item);
-            if (magic != null)
-                item["magic"] = System.Text.Json.JsonSerializer.SerializeToNode(magic, Web.LiveHub.JsonOptions);
-        }
-        return snapshot;
-    }
+    public static JsonObject Enrich(JsonObject snapshot) => SnapshotLogic.Enrich(snapshot);
 }

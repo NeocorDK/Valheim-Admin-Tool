@@ -20,6 +20,11 @@
     <BepInExPath>$(ValheimPath)\BepInEx\core</BepInExPath>
   </PropertyGroup>
 
+  <!-- Logic shared with the agent, compiled into both. -->
+  <ItemGroup>
+    <Compile Include="..\ValheimAdmin.Common\**\*.cs" Link="Common\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.2" PrivateAssets="all" />
