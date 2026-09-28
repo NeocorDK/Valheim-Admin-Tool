@@ -56,8 +56,21 @@ public class CommandParserTests
     }
 
     [Theory]
+    [InlineData("listkeys", "listkeys")]
+    [InlineData("skiptime 100", "skiptime 100")]
+    [InlineData("/event army_eikthyr", "event army_eikthyr")]
+    [InlineData("/  kick Ragnar", "kick Ragnar")]
+    [InlineData("expand_world_reload", "expand_world_reload")]
+    public void OtherLinesRunAsGameCommands(string line, string game)
+    {
+        var p = CommandParser.Parse(line);
+        Assert.Equal("exec", p.Cmd);
+        Assert.Equal(game, p.Args["line"]!.GetValue<string>());
+    }
+
+    [Theory]
     [InlineData("")]
-    [InlineData("flyaway")]
+    [InlineData("/")]
     [InlineData("give Ragnar")]
     [InlineData("give Ragnar Wood many")]
     [InlineData("admin grant 1")]

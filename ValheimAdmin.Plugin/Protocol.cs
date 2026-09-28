@@ -19,8 +19,10 @@ namespace ValheimAdmin
         /// <summary>client -> server: string json (cause of death)</summary>
         public const string Death = "VA_Death";
 
-        /// <summary>server -> client: long reqId, string console command line</summary>
+        /// <summary>server -> client: long reqId, string console command line (0.2 servers)</summary>
         public const string Command = "VA_Cmd";
+        /// <summary>server -> client: long reqId, ZPackage payload (deflated JSON {line, confirmCheats})</summary>
+        public const string Run = "VA_Run";
         /// <summary>server -> client: long reqId, string prefab, int count, int quality</summary>
         public const string Give = "VA_Give";
         /// <summary>server -> client: long reqId, string trigger</summary>

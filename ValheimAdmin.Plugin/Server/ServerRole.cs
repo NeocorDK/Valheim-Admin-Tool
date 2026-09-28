@@ -129,6 +129,14 @@ namespace ValheimAdmin
             }
         }
 
+        /// <summary>True when the peer's client role is at least major.minor.</summary>
+        public static bool AtLeast(ModdedPeer peer, int major, int minor)
+        {
+            string[] parts = (peer?.Version ?? "").Split('.');
+            if (parts.Length < 2 || !int.TryParse(parts[0], out int ma) || !int.TryParse(parts[1], out int mi)) return false;
+            return ma > major || (ma == major && mi >= minor);
+        }
+
         public static ZNetPeer FindPeer(string nameOrId)
         {
             if (ZNet.instance == null || string.IsNullOrEmpty(nameOrId)) return null;

@@ -16,6 +16,7 @@ public sealed class AdminService
     private readonly EventService events;
     private readonly Db db;
     private JsonArray? items;
+    private JsonArray? gameCommands;
     private JsonArray players = [];
     private DateTimeOffset playersAt = DateTimeOffset.MinValue;
 
@@ -28,6 +29,7 @@ public sealed class AdminService
         bridge.ConnectionChanged += () =>
         {
             items = null;
+            gameCommands = null;
             players = [];
             playersAt = DateTimeOffset.MinValue;
         };
@@ -71,6 +73,14 @@ public sealed class AdminService
         if (items == null && bridge.Connected && await bridge.TryRequestAsync("items", timeout: TimeSpan.FromSeconds(30)) is JsonArray list)
             items = list;
         return items ?? [];
+    }
+
+    /// <summary>Console commands the game and its mods registered on the server; they change only with a restart.</summary>
+    public async Task<JsonArray> GameCommandsAsync()
+    {
+        if (gameCommands == null && bridge.Connected && bridge.WorldReady && await bridge.TryRequestAsync("commands") is JsonArray list)
+            gameCommands = list;
+        return gameCommands ?? [];
     }
 
     /// <summary>The online player who owns this character: same character id, or same name with the mod.</summary>

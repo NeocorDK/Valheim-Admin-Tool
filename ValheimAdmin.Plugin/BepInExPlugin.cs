@@ -28,7 +28,7 @@ namespace ValheimAdmin
     {
         public const string pluginGuid = "neocor.ValheimAdmin";
         public const string pluginName = "Valheim Admin";
-        public const string pluginVersion = "0.2.0";
+        public const string pluginVersion = "0.3.0";
 
         private static ManualLogSource logger;
 

@@ -6,7 +6,8 @@ public sealed record ParsedCommand(string Cmd, JsonObject Args);
 
 /// <summary>
 /// Text console of the panel. "@Player command" runs a game console command (god, fly, spawn, ...)
-/// on that player's machine; everything else is a server command.
+/// on that player's machine. The panel's own commands below come next; any other line, or a line
+/// starting with "/", is run as a game console command (vanilla or modded) on the server itself.
 /// </summary>
 public static class CommandParser
 {
@@ -21,6 +22,13 @@ public static class CommandParser
     {
         line = line.Trim();
         if (line.Length == 0) throw new FormatException("empty");
+
+        if (line[0] == '/')
+        {
+            string game = line[1..].Trim();
+            if (game.Length == 0) throw new FormatException("/<game console command>");
+            return Exec(game);
+        }
 
         if (line[0] == '@')
         {
@@ -87,7 +95,9 @@ public static class CommandParser
                 return new(op == "add" ? "list_add" : "list_remove",
                     new JsonObject { ["list"] = name == "admin" ? "admin" : "permitted", ["value"] = Arg(2, usage) });
             default:
-                throw new FormatException("unknown");
+                return Exec(line);
         }
     }
+
+    private static ParsedCommand Exec(string line) => new("exec", new JsonObject { ["line"] = line });
 }

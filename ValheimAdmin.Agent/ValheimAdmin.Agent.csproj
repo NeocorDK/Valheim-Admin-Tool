@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>ValheimAdmin.Agent</AssemblyName>
     <RootNamespace>ValheimAdmin.Agent</RootNamespace>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <!-- Lets `dotnet run` use a newer installed runtime; the published agent is self-contained. -->
     <RollForward>Major</RollForward>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

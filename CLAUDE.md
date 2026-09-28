@@ -64,7 +64,8 @@ ValheimAdmin.Plugin/           plugin (net472)
   Server/Commands.cs           agent command dispatcher (runs on Unity main thread)
   Server/ServerRole.cs         modded peer registry, server→client requests with timeouts, snapshot rounds, heartbeat
   Server/Hooks.cs              Harmony patches → events (join/leave/save/chat/boss/globalkey/raid/death fallback), RPC registration
-  Client/ClientRole.cs         client RPC handlers: cheat command, give, snapshot, restore, chat line
+  ConsoleRunner.cs             runs game console commands with output capture and the cheat-check overrides (both roles)
+  Client/ClientRole.cs         client RPC handlers: console command, give, snapshot, restore, chat line
   Client/Snapshot.cs           Snapshot.Build + Restorer
   Client/Texts.cs              in-game messages (ru if the game runs in Russian)
 package/thunderstore/          manifest.json, icon.png, README.md for the Thunderstore package
@@ -113,7 +114,7 @@ The client accepts requests **only from the server peer** (`FromServer`). Server
 requests time out in `ServerRole.Update`, and are failed when the peer disconnects.
 
 `VA_Hello` (client→server on spawn: version, characterId, name), `VA_Reply`, `VA_Death`,
-`VA_Cmd` (console line), `VA_Give` (prefab, count, quality), `VA_SnapReq` (trigger),
+`VA_Cmd` (console line, 0.2 protocol), `VA_Run` (JSON `{line, confirmCheats}`), `VA_Give` (prefab, count, quality), `VA_SnapReq` (trigger),
 `VA_Restore` (payload), `VA_Chat` (server message line in chat).
 
 ## Commands (panel console → bridge → plugin)
@@ -131,10 +132,15 @@ requests time out in `ServerRole.Update`, and are failed when the peer disconnec
 | `give <player> <prefab> [count] [quality]` | `give` | via client role if modded, else dropped at the player's feet by the server |
 | `snapshot [player]` | `snapshot {trigger:manual}` | |
 | `admins/bans/permits`, `admin|permit add|remove <id>` | `list`, `list_add`, `list_remove` | SyncedList on ZNet |
-| `@Player <line>` | `cheat {player, command}` | runs a game console command on that player's machine |
-| — (panel only) | `items`, `restore`, `shutdown` | item list for autocomplete, snapshot restore, graceful stop |
+| `@Player <line>` | `cheat {player, command, confirmCheats?}` | game console command on that player's machine (see below) |
+| `/<line>` or any other line | `exec {line}` | game console command (vanilla or any mod's) run **on the server** via `ConsoleRunner`; answer `{output:[...]}` |
+| — (panel only) | `items`, `commands`, `restore`, `shutdown` | item list, game command list (help/autocomplete, `/api/console/commands`), snapshot restore, graceful stop |
 
-Anything else is rejected by the parser as `unknown` (being changed: see "Console facts" below).
+Panel commands win over game commands with the same name (`kick`, `event`, `setkey`…); a leading
+`/` forces the game command. `@Player` flow (`Commands.PlayerCommand` → `VA_Run`, or `VA_Cmd` for
+clients older than 0.3): the client answers `{output}`, `{needsConfirm, command}` when a cheat would
+mark a not-yet-cheated character (the panel asks the admin and resends with `confirmCheats`), or
+`{runOnServer}` for server-only/remote commands, which the server then runs itself (`ranOnServer`).
 
 ## Console facts (verified against assembly_valheim, 2026-09)
 
@@ -154,6 +160,8 @@ Anything else is rejected by the parser as `unknown` (being changed: see "Consol
   `ZNet.RemoteCommand`, which requires the client's host id in the admin list. The dedicated server
   runs them with `Console.instance.TryRunCommand` (so `Console.instance` exists on the server).
 - `Terminal.AddString(string)` is the output sink; the plugin captures output with a Harmony postfix.
+- `ConsoleRunner` (plugin) wraps all of this: while it runs a line it forces `IsCheatsEnabled()`
+  and, only when allowed (server side, or admin-confirmed on a client), `Achievements.IsCheatedAtAll()`.
 - `ShowMessage` is registered by `MessageHud` as `<int type, string text>`.
 - `ZNet.Save(bool sync, bool saveOtherPlayerProfiles = false, bool waitForNextFrame = false)`.
 

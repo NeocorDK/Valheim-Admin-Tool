@@ -11,11 +11,10 @@ namespace ValheimAdmin
     /// </summary>
     public static class ClientRole
     {
-        private static List<string> capturedOutput;
-
         public static void Register()
         {
             ZRoutedRpc.instance.Register<long, string>(Rpc.Command, RPC_Command);
+            ZRoutedRpc.instance.Register<long, ZPackage>(Rpc.Run, RPC_Run);
             ZRoutedRpc.instance.Register<long, string, int, int>(Rpc.Give, RPC_Give);
             ZRoutedRpc.instance.Register<long, string>(Rpc.SnapshotRequest, RPC_SnapshotRequest);
             ZRoutedRpc.instance.Register<long, ZPackage>(Rpc.Restore, RPC_Restore);
@@ -91,46 +90,78 @@ namespace ValheimAdmin
             }
         }
 
-        [HarmonyPatch(typeof(Terminal), nameof(Terminal.AddString), typeof(string))]
-        private static class Terminal_AddString_Patch
-        {
-            private static void Postfix(string text)
-            {
-                capturedOutput?.Add(text);
-            }
-        }
-
+        /// <summary>Console command from a 0.2 server: no cheat confirmation, so cheats that would mark the character are refused.</summary>
         private static void RPC_Command(long sender, long requestId, string command)
         {
             if (!FromServer(sender)) return;
+            RunCommand(requestId, command, false);
+        }
+
+        /// <summary>Console command from the admin: {line, confirmCheats}.</summary>
+        private static void RPC_Run(long sender, long requestId, ZPackage payload)
+        {
+            if (!FromServer(sender)) return;
+            Dictionary<string, object> request;
+            try
+            {
+                request = Json.ParseObject(Rpc.Unpack(payload));
+            }
+            catch (Exception e)
+            {
+                Reply(requestId, false, "Bad request: " + e.Message);
+                return;
+            }
+            RunCommand(requestId, request.Str("line", ""), request.Bool("confirmCheats"));
+        }
+
+        /// <summary>
+        /// Replies {output} after running the command, {needsConfirm} when a cheat would mark the
+        /// character and the admin has not accepted that, or {runOnServer} for commands only the
+        /// server can run (the server then runs them itself).
+        /// </summary>
+        private static void RunCommand(long requestId, string line, bool confirmCheats)
+        {
             if (!BepInExPlugin.AllowServerCommands.Value)
             {
-                Reply(requestId, false, "The player disabled remote commands");
+                Reply(requestId, false, "The player disabled remote commands in the Valheim Admin config");
                 return;
             }
             if (Console.instance == null)
             {
-                Reply(requestId, false, "Console is not available");
+                Reply(requestId, false, "The game console is not available");
                 return;
             }
 
-            BepInExPlugin.Log("Admin command: " + command);
-            bool cheat = Terminal.m_cheat;
-            capturedOutput = new List<string>();
+            Terminal.ConsoleCommand cmd = ConsoleRunner.Find(line);
+            if (cmd == null)
+            {
+                Reply(requestId, false, "Unknown console command on the player's game: " + ConsoleRunner.FirstWord(line));
+                return;
+            }
+            if (!ConsoleRunner.IsValidHere(Console.instance, cmd))
+            {
+                if (cmd.OnlyServer || cmd.RemoteCommand)
+                    Reply(requestId, true, new Dictionary<string, object> { { "runOnServer", true } });
+                else
+                    Reply(requestId, false, "'" + cmd.Command + "' can't run on the player's game right now");
+                return;
+            }
+            if (cmd.IsCheat && !confirmCheats && !Achievements.IsCheatedAtAll())
+            {
+                Reply(requestId, true, new Dictionary<string, object> { { "needsConfirm", true }, { "command", cmd.Command } });
+                return;
+            }
+
+            BepInExPlugin.Log("Admin command: " + line);
             try
             {
-                Terminal.m_cheat = true;
-                Console.instance.TryRunCommand(command, false, true);
-                Reply(requestId, true, new Dictionary<string, object> { { "output", capturedOutput } });
+                var result = ConsoleRunner.Run(Console.instance, line, confirmCheats);
+                Reply(requestId, true, new Dictionary<string, object> { { "output", result.Output } });
             }
             catch (Exception e)
             {
+                BepInExPlugin.Warn("Admin command failed: " + e);
                 Reply(requestId, false, e.Message);
-            }
-            finally
-            {
-                capturedOutput = null;
-                Terminal.m_cheat = cheat;
             }
         }
 

@@ -13,7 +13,7 @@ using static ValheimAdmin.Agent.I18n;
 namespace ValheimAdmin.Agent.Web;
 
 public sealed record LoginBody(string Password);
-public sealed record ConsoleBody(string Line);
+public sealed record ConsoleBody(string Line, bool? ConfirmCheats);
 public sealed record MinutesBody(int Minutes);
 public sealed record PlayerActionBody(string Action, string Player);
 public sealed record ListChangeBody(string Op, string Value);
@@ -155,11 +155,14 @@ public static partial class Api
         {
             var parsed = CommandParser.Parse(body.Line ?? "");
             if (parsed.Cmd == "help") return new { help = CommandParser.Commands };
-            db.Audit(Who(ctx), "console", body.Line);
+            if (parsed.Cmd == "cheat" && body.ConfirmCheats == true) parsed.Args["confirmCheats"] = true;
+            db.Audit(Who(ctx), "console", body.ConfirmCheats == true ? body.Line + " (cheat mark confirmed)" : body.Line);
             TimeSpan timeout = parsed.Cmd is "cheat" or "snapshot" or "give" ? TimeSpan.FromSeconds(45) : TimeSpan.FromSeconds(20);
             var result = await bridge.RequestAsync(parsed.Cmd, parsed.Args, timeout);
-            return new { cmd = parsed.Cmd, result };
+            return new { cmd = parsed.Cmd, player = (string?)parsed.Args["player"], result };
         }));
+
+        api.MapGet("/console/commands", (AdminService admin) => Run(async () => await admin.GameCommandsAsync()));
 
         // ---------- logs ----------
         api.MapGet("/logs", (LogTailer tailer, long? after, int? limit) =>

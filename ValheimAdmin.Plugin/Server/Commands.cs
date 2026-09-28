@@ -44,8 +44,9 @@ namespace ValheimAdmin
                     return;
 
                 case "save":
+                    // Returns once the save is under way; the "save" event confirms it.
                     ZNet.instance.Save(false, true, false);
-                    Ok(id);
+                    Ok(id, new Dictionary<string, object> { { "saving", true } });
                     return;
 
                 case "shutdown":
@@ -83,7 +84,15 @@ namespace ValheimAdmin
 
                 case "broadcast":
                     Broadcast(Required(args, "text"), args.Bool("center", true));
-                    Ok(id);
+                    Ok(id, new Dictionary<string, object> { { "recipients", ZNet.instance.GetNrOfPlayers() } });
+                    return;
+
+                case "exec":
+                    Exec(id, Required(args, "line"));
+                    return;
+
+                case "commands":
+                    Ok(id, ConsoleRunner.List());
                     return;
 
                 case "keys":
@@ -141,7 +150,7 @@ namespace ValheimAdmin
                     return;
 
                 case "cheat":
-                    ForwardToClient(id, args, Rpc.Command, 20f, Required(args, "command"));
+                    PlayerCommand(id, args);
                     return;
 
                 case "give":
@@ -270,6 +279,86 @@ namespace ValheimAdmin
                 else
                     Fail(id, json);
             }, rpcArgs);
+        }
+
+        /// <summary>Runs a game console command (vanilla or modded) on the dedicated server itself.</summary>
+        private static void Exec(long id, string line, bool ranForPlayer = false)
+        {
+            if (Console.instance == null)
+            {
+                Fail(id, "The game console is not available on this server");
+                return;
+            }
+            Terminal.ConsoleCommand cmd = ConsoleRunner.Find(line);
+            if (cmd == null)
+            {
+                Fail(id, "Unknown game command: " + ConsoleRunner.FirstWord(line));
+                return;
+            }
+            BepInExPlugin.Log("Admin command on the server: " + line);
+            var result = ConsoleRunner.Run(Console.instance, line, allowCheatMark: true);
+            var data = new Dictionary<string, object> { { "output", result.Output } };
+            if (ranForPlayer) data["ranOnServer"] = true;
+            Ok(id, data);
+        }
+
+        /// <summary>
+        /// "@Player command": runs on the player's game. Commands that only the server can run come
+        /// back as {runOnServer} and are run here instead.
+        /// </summary>
+        private static void PlayerCommand(long id, Dictionary<string, object> args)
+        {
+            string line = Required(args, "command");
+            ZNetPeer peer = ServerRole.FindPeer(Required(args, "player"));
+            if (peer == null)
+            {
+                Fail(id, "Player is not online");
+                return;
+            }
+            if (!ServerRole.Modded.TryGetValue(peer.m_uid, out var mod))
+            {
+                Fail(id, "Player does not have the Valheim Admin mod, so commands can't run on their game. Server commands work without it.");
+                return;
+            }
+
+            Action<bool, string> done = (ok, json) =>
+            {
+                if (!ok)
+                {
+                    Fail(id, json);
+                    return;
+                }
+                Dictionary<string, object> reply = null;
+                try
+                {
+                    reply = Json.ParseObject(json);
+                }
+                catch
+                {
+                }
+                if (reply == null || !reply.Bool("runOnServer"))
+                {
+                    Ok(id, new Json.Raw(json));
+                    return;
+                }
+                try
+                {
+                    Exec(id, line, ranForPlayer: true);
+                }
+                catch (Exception e)
+                {
+                    BepInExPlugin.Warn("Command " + line + " failed: " + e);
+                    Fail(id, e.Message);
+                }
+            };
+
+            if (ServerRole.AtLeast(mod, 0, 3))
+            {
+                string request = Json.Serialize(new Dictionary<string, object> { { "line", line }, { "confirmCheats", args.Bool("confirmCheats") } });
+                ServerRole.SendToClient(peer.m_uid, Rpc.Run, 20f, done, Rpc.Pack(request));
+            }
+            else
+                ServerRole.SendToClient(peer.m_uid, Rpc.Command, 20f, done, line);
         }
 
         private static void Give(long id, Dictionary<string, object> args)

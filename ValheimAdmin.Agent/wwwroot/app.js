@@ -187,6 +187,7 @@ const state = {
   items: null,
   logs: [],
   logSeq: 0,
+  gameCommands: null,
 };
 const liveHandlers = new Set();
 
@@ -203,6 +204,40 @@ function playersDatalist() {
   let dl = $('#dl-players');
   if (!dl) { dl = h('datalist', { id: 'dl-players' }); document.body.append(dl); }
   fill(dl, ...(state.status?.players || []).map(p => h('option', { value: p.player })));
+}
+
+/** Game console commands registered on the server (vanilla and mods); loaded once per page. */
+async function loadGameCommands() {
+  if (state.gameCommands?.length) return state.gameCommands;
+  try { state.gameCommands = await api('/console/commands'); } catch { state.gameCommands = []; }
+  return state.gameCommands;
+}
+
+/**
+ * Sends a console line. A cheat on a player whose character is not marked as cheated comes back
+ * as needsConfirm: the admin decides, and the line is sent again with confirmCheats.
+ */
+async function runConsole(line) {
+  let res = await api('/console', { method: 'POST', body: { line } });
+  if (res.result?.needsConfirm) {
+    const ok = await confirmDialog(t('con.cheatTitle'), t('con.cheatConfirm', res.player || '?', res.result.command), t('con.cheatRun'), true);
+    if (!ok) return { declined: true };
+    res = await api('/console', { method: 'POST', body: { line, confirmCheats: true } });
+  }
+  return res;
+}
+
+/** Text lines for a console answer. */
+function consoleLines(res) {
+  if (res.declined) return [t('con.cheatDeclined')];
+  const r = res.result, out = [];
+  if (r?.ranOnServer) out.push(t('con.ranOnServer'));
+  if (Array.isArray(r?.output)) out.push(...(r.output.some(o => o.trim()) ? r.output : [t('con.noOutput')]));
+  else if (r?.saving) out.push(t('con.saving'));
+  else if (r?.recipients != null) out.push(t('con.sentTo', r.recipients));
+  else if (Array.isArray(r)) out.push(r.length ? r.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join('\n') : t('con.empty'));
+  else out.push(r == null ? 'OK' : JSON.stringify(r, null, 2));
+  return out;
 }
 
 const CHEATS = ['god', 'ghost', 'debugmode', 'fly', 'freefly', 'nocost', 'heal', 'puke', 'tame', 'killall', 'killenemies', 'removedrops',
@@ -381,9 +416,11 @@ views.console = {
     const dl = h('datalist', { id: 'dl-console' });
     const refreshSuggestions = () => {
       const players = (state.status?.players || []).map(p => p.player);
+      const panel = ['help', 'players', 'save', 'say ', 'kick ', 'ban ', 'unban ', 'give ', 'snapshot', 'keys', 'setkey ', 'removekey ', 'sleep', 'events', 'event ', 'stopevent', 'admins', 'bans', 'permits', 'admin add ', 'permit add ', 'plugins', 'status'];
+      const game = (state.gameCommands || []).map(c => c.name).filter(n => !panel.includes(n) && !panel.includes(n + ' '));
       fill(dl, 
-        ...['help', 'players', 'save', 'say ', 'kick ', 'ban ', 'unban ', 'give ', 'snapshot', 'keys', 'setkey ', 'removekey ', 'sleep', 'events', 'event ', 'stopevent', 'admins', 'bans', 'permits', 'admin add ', 'permit add ', 'plugins', 'status']
-          .map(c => h('option', { value: c })),
+        ...panel.map(c => h('option', { value: c })),
+        ...game.map(c => h('option', { value: c })),
         ...players.flatMap(p => CHEATS.slice(0, 12).map(c => h('option', { value: `@${p} ${c}` }))));
     };
 
@@ -396,14 +433,16 @@ views.console = {
       input.value = '';
       addLocal('» ' + line, 'cmd');
       try {
-        const res = await api('/console', { method: 'POST', body: { line } });
-        if (res.help) { addLocal(t('con.help'), 'result'); return; }
-        const r = res.result;
-        if (r?.output) r.output.forEach(o => addLocal(o, 'result'));
-        else if (Array.isArray(r)) addLocal(r.length ? r.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join('\n') : t('con.empty'), 'result');
-        else addLocal(r == null ? 'OK' : JSON.stringify(r, null, 2), 'result');
+        const res = await runConsole(line);
+        if (res.help) {
+          addLocal(t('con.help'), 'result');
+          const game = await loadGameCommands();
+          if (game.length) addLocal(t('con.gameCommands', game.length) + '\n' + game.map(c => `  ${c.name}${c.description ? ' — ' + c.description : ''}`).join('\n'), 'result');
+          return;
+        }
+        consoleLines(res).forEach(o => addLocal(o, 'result'));
       } catch (e) {
-        addLocal(e.message === 'unknown' ? t('con.unknown') : e.message, 'error');
+        addLocal(e.message, 'error');
       }
     };
     input.addEventListener('keydown', e => {
@@ -433,6 +472,8 @@ views.console = {
       renderAll();
       refreshSuggestions();
       input.focus();
+      await loadGameCommands();
+      refreshSuggestions();
     })();
 
     return msg => {
@@ -530,9 +571,8 @@ views.players = {
       ], t('btn.run'));
       if (!v) return;
       try {
-        const res = await api('/console', { method: 'POST', body: { line: `@"${player}" ${v.command}` } });
-        const out = res.result?.output || [];
-        toast(out.length ? out.join('\n') : t('toast.done'), 'ok');
+        const res = await runConsole(`@"${player}" ${v.command}`);
+        toast(consoleLines(res).join('\n'), res.declined ? 'err' : 'ok');
       } catch (e) { fail(e); }
     };
     const snapshot = async player => {
