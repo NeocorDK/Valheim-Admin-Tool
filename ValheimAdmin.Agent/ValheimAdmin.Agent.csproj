@@ -11,6 +11,8 @@
     <RollForward>Major</RollForward>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <SatelliteResourceLanguages>en;ru</SatelliteResourceLanguages>
+    <!-- UseStaticFiles serves the plain files; no precompressed copies. -->
+    <CompressionEnabled>false</CompressionEnabled>
   </PropertyGroup>
 
   <!-- dotnet publish -c Release -r win-x64 -->
@@ -23,8 +25,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="ValheimAdmin.Agent.Tests" />
-    <!-- The agent serves the panel from wwwroot next to the exe, also when run from bin. -->
-    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The panel lives in ..\web (the plugin embeds the same files). The agent serves it from
+         wwwroot next to the exe, also when run from bin. -->
+    <Content Include="..\web\**" LinkBase="wwwroot" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

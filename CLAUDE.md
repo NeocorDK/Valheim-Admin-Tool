@@ -56,7 +56,8 @@ ValheimAdmin.Agent/            agent (net10.0, Microsoft.NET.Sdk.Web)
   Web/Api.cs                   every HTTP route
   Web/LiveHub.cs               WebSocket broadcast (status, log, event, players, snapshot)
   Web/StatusPump.cs            status every 2 s; StatusBuilder; LoginGuard (5 fails → 10 min lock per IP)
-  wwwroot/                     panel: vanilla JS ES modules, no build step (index.html, app.js, app.css, i18n.js)
+web/                           panel: vanilla JS ES modules, no build step (index.html, app.js, app.css, i18n.js);
+                               the agent copies it to wwwroot/ (csproj Content link), the plugin will embed it
 ValheimAdmin.Agent.Tests/      xUnit: SnapshotLogicTests, MiscTests (parser, log levels, i18n, config, store, scheduler)
 ValheimAdmin.Plugin/           plugin (net472)
   BepInExPlugin.cs             entry point, config entries, Update() pumps MainThread + ServerRole
@@ -216,10 +217,10 @@ mark a not-yet-cheated character (the panel asks the admin and resends with `con
 
 ## Web panel
 
-- `wwwroot/app.js`: tiny `h()` DOM helper, `api()` fetch wrapper (401 → login screen), views
+- `web/app.js`: tiny `h()` DOM helper, `api()` fetch wrapper (401 → login screen), views
   registered in `views.*` and routed by `location.hash`, live updates over `/ws`.
   Tabs: overview, console, events, players, characters (snapshots), configs, maintenance.
-- `wwwroot/i18n.js`: `t(key, ...args)`, en/ru dictionaries; `MiscTests.EveryKeyHasBothLanguages`
+- `web/i18n.js`: `t(key, ...args)`, en/ru dictionaries; `MiscTests.EveryKeyHasBothLanguages`
   checks the **agent** I18n only — keep the JS dictionaries in sync by hand.
 - Auth: single panel password, PBKDF2 (100k, SHA-256). Cookie `va_auth` (HttpOnly, SameSite=Strict,
   30 days sliding), keys in `data/keys` (DPAPI on Windows). `/api/login` and `/api/logout` are
