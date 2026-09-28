@@ -312,6 +312,8 @@ the plugin never opens a web port.
 - `Api.Run` maps exceptions: `BridgeException`→409, `KeyNotFound`/`FileNotFound`→404,
   `UnauthorizedAccess`→403, `Format`/`Argument`→400, `InvalidOperation`→409. Anything else is a 500.
 - Every mutating action writes `db.Audit(ip, action, details)`.
+- Panel files are served with `Cache-Control: no-cache` (both servers): after an update a cached old
+  `app.js` against the new `index.html` leaves the page blank.
 
 ## Code rules
 

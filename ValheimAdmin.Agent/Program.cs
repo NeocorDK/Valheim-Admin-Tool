@@ -114,7 +114,12 @@ app.Services.GetRequiredService<AdminService>();
 
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// Browsers must revalidate the panel files (cheap 304 via ETag); otherwise, after an update, a cached
+// old app.js can run against the new index.html and the page stays blank.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache",
+});
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
