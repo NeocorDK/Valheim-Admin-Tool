@@ -48,7 +48,8 @@ if (Test-Path $agentOut) { Remove-Item -Recurse -Force $agentOut }
 Invoke-Checked 'agent' { dotnet publish (Join-Path $root 'ValheimAdmin.Agent') -c Release -r win-x64 --nologo -v q -o $agentOut }
 Get-ChildItem $agentOut -Filter '*.pdb' | Remove-Item
 Remove-Item (Join-Path $agentOut 'web.config') -ErrorAction SilentlyContinue   # IIS only
-Get-ChildItem (Join-Path $agentOut 'wwwroot') -Filter '*.gz' -ErrorAction SilentlyContinue | Remove-Item
+Get-ChildItem (Join-Path $agentOut 'wwwroot') -Recurse -Include '*.gz', '*.br' -ErrorAction SilentlyContinue | Remove-Item
+Remove-Item (Join-Path $agentOut '*.staticwebassets.*.json') -ErrorAction SilentlyContinue
 
 # Zip with forward slashes: Compress-Archive on Windows PowerShell 5.1 writes backslashes,
 # which Node-based mod managers mis-extract.
@@ -78,6 +79,7 @@ New-Zip (Join-Path $dist "neocor-ValheimAdmin-$version.zip") @{
     'manifest.json'          = Join-Path $thunderstore 'manifest.json'
     'icon.png'               = Join-Path $thunderstore 'icon.png'
     'README.md'              = Join-Path $thunderstore 'README.md'
+    'CHANGELOG.md'           = Join-Path $root 'CHANGELOG.md'
     'plugins/ValheimAdmin.dll' = $pluginDll
 }
 
@@ -87,4 +89,6 @@ New-Zip (Join-Path $dist "ValheimAdmin-$version-win-x64.zip") @{
     'ValheimAdmin/README.md'                = Join-Path $root 'README.md'
     'ValheimAdmin/README.ru.md'             = Join-Path $root 'README.ru.md'
     'ValheimAdmin/LICENSE'                  = Join-Path $root 'LICENSE'
+    'ValheimAdmin/THIRD_PARTY_NOTICES.md'   = Join-Path $root 'THIRD_PARTY_NOTICES.md'
+    'ValheimAdmin/CHANGELOG.md'             = Join-Path $root 'CHANGELOG.md'
 }

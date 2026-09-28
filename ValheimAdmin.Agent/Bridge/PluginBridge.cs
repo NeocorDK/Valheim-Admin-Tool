@@ -36,6 +36,22 @@ public sealed class PluginBridge : BackgroundService
     public bool WorldReady => Stats?["ready"]?.GetValue<bool>() == true;
 
     /// <summary>
+    /// Agent and mod speak a protocol that changes between minor versions; a mismatch is shown in
+    /// the panel instead of failing quietly. Null when the versions fit.
+    /// </summary>
+    public string? VersionMismatch
+    {
+        get
+        {
+            string? plugin = PluginVersion;
+            string agent = typeof(PluginBridge).Assembly.GetName().Version?.ToString(3) ?? "";
+            if (plugin == null) return null;
+            static string MajorMinor(string v) => string.Join('.', v.Split('.').Take(2));
+            return MajorMinor(plugin) == MajorMinor(agent) ? null : $"mod {plugin}, agent {agent}";
+        }
+    }
+
+    /// <summary>
     /// Decides whether a plugin in the given server process may take the link; returns the refusal
     /// reason, or null to accept. Keeps a stray second server from taking over the panel.
     /// </summary>
@@ -124,6 +140,8 @@ public sealed class PluginBridge : BackgroundService
             LastHeartbeat = DateTimeOffset.UtcNow;
             Stats = null;
             log.LogInformation("Plugin {Version} connected (pid {Pid})", PluginVersion, PluginPid);
+            if (VersionMismatch is { } mismatch)
+                log.LogWarning("Valheim Admin versions differ ({Mismatch}); update the agent and the mod together", mismatch);
             ConnectionChanged?.Invoke();
 
             string? line;

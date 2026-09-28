@@ -345,15 +345,37 @@ Agent (net10):
 
 ## Testing on a real server
 
-There is no automated in-game test. After plugin changes, check on a real dedicated server with at
-least one client that has the mod: console commands (server and `@Player`), snapshot on `save`,
-Compare, restore add/replace, events (join/leave/death/chat). Look at `BepInEx/LogOutput.log` on
-both sides; set `[General] Debug = true` for verbose plugin logs.
+There is no automated in-game test (the agent side has xUnit tests, and a fake-plugin smoke test
+can drive the agent over the bridge). After plugin changes, check on a real dedicated server with
+at least one client that has the mod, in **both modes** (agent; standalone = start the server
+without the agent):
+
+- console: `listkeys`, `skiptime 100`, a command of another mod, `/event army_eikthyr`, `say`,
+  `save` (then the save event), `@Player god` (confirmation dialog), `@Player skiptime` (runs on
+  the server), a player without the mod (clear error);
+- snapshots with mods (Epic Loot, Therzie, Jewelcrafting, a SkillManager skill, an extra-slots mod):
+  snapshot → lose/damage items → Compare → restore add/replace; icons appear;
+- map on a `nomap` world: first drawing, public view with fog and only visible players, admin view
+  with portals/locations/tombstones, pins, redraw; the cache survives a restart;
+- standalone on Linux (e.g. docker lloesche/valheim-server) and on Windows: panel on port 8095,
+  generated password in the log, sign-in, console, snapshots.
+
+Look at `BepInEx/LogOutput.log` on both sides; set `[General] Debug = true` for verbose plugin logs.
+
+## Release
+
+1. Bump the version in manifest.json, `BepInExPlugin.pluginVersion` and the Agent csproj (the
+   plugin csproj too); the agent warns in the panel when agent and mod major.minor differ.
+2. Add a CHANGELOG.md entry (shipped in both zips).
+3. `package.ps1` → `dist/neocor-ValheimAdmin-<v>.zip` (Thunderstore: DLL with the embedded panel,
+   README, CHANGELOG, icon, manifest; description max 250 chars) and
+   `dist/ValheimAdmin-<v>-win-x64.zip` (agent + DLL + docs) for GitHub Releases.
+4. Branch `snapshots-v0.2` keeps 0.2.0. No GitHub remote is configured yet; ask before pushing.
 
 ## Known limitations / traps
 
 - The agent is Windows-only (service, Ctrl+C helper, DPAPI, Tailscale detection).
-- Agent and plugin must be updated together; there is no protocol version negotiation yet.
+- Agent and plugin must be updated together; the agent only warns on a major.minor mismatch.
 - Items from mods that keep state outside the item itself (neither `m_customData` nor the item bytes) may not restore completely.
 - `ZNet.IsDedicated()` gates the server role; a listen-server host gets neither role's server side.
 - Snapshots of players without the mod are impossible (data is client-side).

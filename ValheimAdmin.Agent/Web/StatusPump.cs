@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using ValheimAdmin.Agent.Bridge;
 using ValheimAdmin.Agent.Server;
 
 namespace ValheimAdmin.Agent.Web;
@@ -26,11 +27,12 @@ public sealed class StatusPump(LiveHub hub, StatusBuilder status) : BackgroundSe
     }
 }
 
-public sealed class StatusBuilder(AgentConfig config, ServerManager server, Scheduler scheduler, Updater updater, AdminService admin)
+public sealed class StatusBuilder(AgentConfig config, ServerManager server, Scheduler scheduler, Updater updater, AdminService admin, PluginBridge bridge)
 {
     public async Task<object> BuildAsync() => new
     {
         agent = new { version = typeof(StatusBuilder).Assembly.GetName().Version?.ToString(3), language = config.Language, world = config.Server.World },
+        versionMismatch = bridge.VersionMismatch,
         server = server.Status(),
         players = await admin.PlayersAsync(),
         nextRestart = scheduler.Next,

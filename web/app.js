@@ -316,6 +316,7 @@ function renderTopbar() {
     s.memoryMb != null ? h('span', {}, 'RAM ', h('b', { text: s.memoryMb + ' MB' })) : null,
     stats.fps != null ? h('span', {}, 'FPS ', h('b', { text: String(stats.fps) })) : null,
     !s.pluginConnected && s.pid ? h('span', { class: 'error', text: t('stat.noplugin') }) : null,
+    st.versionMismatch ? h('span', { class: 'error', text: t('stat.version', st.versionMismatch) }) : null,
   );
 }
 

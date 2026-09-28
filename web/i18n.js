@@ -31,6 +31,7 @@ const dict = {
     'stat.uptime': 'Uptime',
     'stat.players': 'Players',
     'stat.noplugin': 'mod not connected',
+    'stat.version': 'versions differ ({0}): update the agent and the mod together',
 
     'u.d': 'd', 'u.h': 'h', 'u.m': 'm', 'u.s': 's',
 
@@ -318,6 +319,7 @@ const dict = {
     'stat.uptime': 'Аптайм',
     'stat.players': 'Игроки',
     'stat.noplugin': 'мод не подключён',
+    'stat.version': 'версии не совпадают ({0}): обновите агент и мод вместе',
 
     'u.d': 'д', 'u.h': 'ч', 'u.m': 'м', 'u.s': 'с',
 
