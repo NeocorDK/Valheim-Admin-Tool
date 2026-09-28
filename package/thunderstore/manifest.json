@@ -1,0 +1,9 @@
+{
+  "namespace": "neocor",
+  "name": "ValheimAdmin",
+  "description": "Companion mod for the Valheim Admin panel: character snapshots with Epic Loot enchantments, restore, remote console commands and a server event log.",
+  "version_number": "0.2.0",
+  "dependencies": [],
+  "website_url": "https://github.com/NeocorDK/ValheimAdmin",
+  "FullName": "Neocor-ValheimAdmin"
+}

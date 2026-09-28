@@ -1,0 +1,16 @@
+# build output
+dist/
+bin/
+obj/
+
+# local agent state when run from the source tree
+agent.json
+data/
+
+# editor / OS
+.vs/
+.vscode/
+*.user
+*.suo
+Thumbs.db
+desktop.ini

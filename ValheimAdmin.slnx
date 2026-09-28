@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="ValheimAdmin.Agent.Tests/ValheimAdmin.Agent.Tests.csproj" />
+  <Project Path="ValheimAdmin.Agent/ValheimAdmin.Agent.csproj" />
+  <Project Path="ValheimAdmin.Plugin/ValheimAdmin.Plugin.csproj" />
+</Solution>

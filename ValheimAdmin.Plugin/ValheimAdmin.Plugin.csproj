@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>ValheimAdmin</AssemblyName>
+    <RootNamespace>ValheimAdmin</RootNamespace>
+    <Version>0.2.0</Version>
+    <LangVersion>latest</LangVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <OutputPath>..\dist\plugin</OutputPath>
+  </PropertyGroup>
+
+  <!-- Override on the command line if Valheim lives somewhere else:
+       dotnet build -c Release -p:ValheimPath="C:\Path\To\Valheim" -->
+  <PropertyGroup>
+    <ValheimPath Condition="'$(ValheimPath)' == ''">G:\Steam\steamapps\common\Valheim</ValheimPath>
+    <ManagedPath>$(ValheimPath)\valheim_Data\Managed</ManagedPath>
+    <BepInExPath>$(ValheimPath)\BepInEx\core</BepInExPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.2" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="assembly_valheim" Publicize="true"><HintPath>$(ManagedPath)\assembly_valheim.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_utils" Publicize="true"><HintPath>$(ManagedPath)\assembly_utils.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_guiutils"><HintPath>$(ManagedPath)\assembly_guiutils.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Splatform"><HintPath>$(ManagedPath)\Splatform.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(ManagedPath)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(ManagedPath)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(ManagedPath)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx"><HintPath>$(BepInExPath)\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(BepInExPath)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+</Project>
