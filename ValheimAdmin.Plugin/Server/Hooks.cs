@@ -51,6 +51,7 @@ namespace ValheimAdmin
                 if (ZNet.instance.IsDedicated())
                 {
                     ServerRole.Register();
+                    Web.StandaloneServer.Start();
                     AgentLink.Event("started", new Dictionary<string, object> { { "world", ZNet.instance.GetWorldName() } });
                 }
                 else

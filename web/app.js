@@ -249,8 +249,18 @@ const CHEATS = ['god', 'ghost', 'debugmode', 'fly', 'freefly', 'nocost', 'heal',
 // ---------------------------------------------------------------- live connection
 
 let socket, reconnectTimer;
+const hasFeature = name => (state.info?.features || []).includes(name);
+
+function dispatchLive(msg) {
+  if (msg.type === 'status') { state.status = msg.payload; renderTopbar(); }
+  if (msg.type === 'log') pushLog(msg.payload);
+  for (const fn of liveHandlers) { try { fn(msg); } catch (err) { console.error(err); } }
+}
+
+/** Live updates: the agent pushes them over a WebSocket; the plugin's own server is polled. */
 function connectLive() {
   clearTimeout(reconnectTimer);
+  if (!hasFeature('ws')) { pollLive(); return; }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   socket = new WebSocket(`${proto}://${location.host}/ws`);
   socket.onopen = () => $('#live-indicator').classList.add('on');
@@ -258,12 +268,29 @@ function connectLive() {
     $('#live-indicator').classList.remove('on');
     if (state.admin) reconnectTimer = setTimeout(connectLive, 3000);
   };
-  socket.onmessage = e => {
-    const msg = JSON.parse(e.data);
-    if (msg.type === 'status') { state.status = msg.payload; renderTopbar(); }
-    if (msg.type === 'log') pushLog(msg.payload);
-    for (const fn of liveHandlers) { try { fn(msg); } catch (err) { console.error(err); } }
-  };
+  socket.onmessage = e => dispatchLive(JSON.parse(e.data));
+}
+
+const poll = { players: null, eventId: null };
+async function pollLive() {
+  clearTimeout(reconnectTimer);
+  if (!state.admin) return;
+  try {
+    const status = await api('/status');
+    dispatchLive({ type: 'status', payload: status });
+    const names = (status.players || []).map(p => p.player).sort().join(',');
+    if (poll.players !== null && names !== poll.players) dispatchLive({ type: 'players', payload: {} });
+    poll.players = names;
+    for (const line of await api('/logs?limit=1000&after=' + state.logSeq)) dispatchLive({ type: 'log', payload: line });
+    const events = await api('/events?limit=20');
+    if (poll.eventId !== null)
+      for (const ev of events.filter(e => e.id > poll.eventId).reverse()) dispatchLive({ type: 'event', payload: ev });
+    if (events.length) poll.eventId = Math.max(poll.eventId ?? 0, ...events.map(e => e.id));
+    $('#live-indicator').classList.add('on');
+  } catch {
+    $('#live-indicator').classList.remove('on');
+  }
+  if (state.admin) reconnectTimer = setTimeout(pollLive, 3000);
 }
 
 function pushLog(line) {
@@ -282,7 +309,7 @@ function renderTopbar() {
   $('#server-pill').className = 'server-pill st-' + s.state;
   $('#server-state').textContent = stateLabel(s.state) + (s.operation ? ' · ' + t('op.' + s.operation) : '');
   const stats = s.stats || {};
-  fill($('#topbar-stats'), 
+  fill($('#topbar-stats'),
     s.pid ? h('span', {}, t('stat.uptime') + ' ', h('b', { text: fmtDuration(s.uptimeSec) })) : null,
     h('span', {}, t('stat.players') + ' ', h('b', { text: String((st.players || []).length) })),
     s.cpuPercent != null ? h('span', {}, 'CPU ', h('b', { text: s.cpuPercent + '%' })) : null,
@@ -325,7 +352,7 @@ views.overview = {
       if (!st) return;
       const s = st.server, x = s.stats || {};
       const stat = (label, value) => h('div', { class: 'stat' }, h('div', { class: 'label', text: label }), h('div', { class: 'value', text: value ?? '—' }));
-      fill(statsEl, 
+      fill(statsEl,
         stat(t('ov.state'), stateLabel(s.state)),
         stat(t('stat.uptime'), s.pid ? fmtDuration(s.uptimeSec) : '—'),
         stat('CPU', s.cpuPercent != null ? s.cpuPercent + '%' : '—'),
@@ -337,17 +364,19 @@ views.overview = {
         stat(t('ov.plugin'), s.pluginConnected ? 'v' + s.pluginVersion : t('ov.disconnected')),
         stat(t('ov.build'), st.update?.buildId),
       );
-      const running = !!s.pid, busy = !!s.operation;
-      fill(controls, 
-        h('button', { class: 'btn primary', text: t('btn.start'), disabled: running || busy, onclick: () => act('start') }),
-        h('button', { class: 'btn', text: t('btn.stop'), disabled: !running || busy, onclick: () => act('stop', t('confirm.stop')) }),
-        h('button', { class: 'btn', text: t('btn.restart'), disabled: !running || busy, onclick: () => act('restart', t('confirm.restart')) }),
+      const running = !!s.pid, busy = !!s.operation, control = hasFeature('server-control');
+      // Without the agent (standalone mode) the game cannot start or stop itself; the host's panel does that.
+      fill(controls,
+        control ? h('button', { class: 'btn primary', text: t('btn.start'), disabled: running || busy, onclick: () => act('start') }) : null,
+        control ? h('button', { class: 'btn', text: t('btn.stop'), disabled: !running || busy, onclick: () => act('stop', t('confirm.stop')) }) : null,
+        control ? h('button', { class: 'btn', text: t('btn.restart'), disabled: !running || busy, onclick: () => act('restart', t('confirm.restart')) }) : null,
         h('button', { class: 'btn', text: t('btn.save'), disabled: !s.pluginConnected, onclick: () => act('save') }),
         h('span', { class: 'spacer' }),
-        h('button', { class: 'btn danger', text: t('btn.kill'), onclick: () => act('kill', t('confirm.kill')) }),
+        control ? h('button', { class: 'btn danger', text: t('btn.kill'), onclick: () => act('kill', t('confirm.kill')) }) : h('span', { class: 'muted small', text: t('ov.standalone') }),
       );
+      restartEl.hidden = !control;
       const nr = st.nextRestart;
-      fill(restartEl, 
+      fill(restartEl,
         h('span', { class: 'muted', text: t('ov.nextRestart') + ': ' }),
         h('b', { text: nr ? `${fmtDate(Date.parse(nr.at))} (${nr.reason})` : '—' }),
         nr ? h('button', { class: 'btn small', text: t('btn.cancelRestart'), onclick: () => act('cancel-restart') }) : null,
@@ -421,7 +450,7 @@ views.console = {
       const players = (state.status?.players || []).map(p => p.player);
       const panel = ['help', 'players', 'save', 'say ', 'kick ', 'ban ', 'unban ', 'give ', 'snapshot', 'keys', 'setkey ', 'removekey ', 'sleep', 'events', 'event ', 'stopevent', 'admins', 'bans', 'permits', 'admin add ', 'permit add ', 'plugins', 'status'];
       const game = (state.gameCommands || []).map(c => c.name).filter(n => !panel.includes(n) && !panel.includes(n + ' '));
-      fill(dl, 
+      fill(dl,
         ...panel.map(c => h('option', { value: c })),
         ...game.map(c => h('option', { value: c })),
         ...players.flatMap(p => CHEATS.slice(0, 12).map(c => h('option', { value: `@${p} ${c}` }))));
@@ -810,7 +839,7 @@ views.characters = {
         } catch (e) { fail(e); }
       };
 
-      fill(detailEl, 
+      fill(detailEl,
         h('div', { class: 'row' }, h('h2', { style: 'margin:0', text: `${row.player} · ${fmtDate(row.ts)}` }), h('span', { class: 'badge', text: t('trig.' + row.trigger) }),
           h('span', { class: 'spacer' }), h('button', { class: 'btn', text: t('ch.compare'), onclick: compare, title: t('ch.compareHint') })),
         h('div', { style: 'height:12px' }),
@@ -899,7 +928,7 @@ views.configs = {
       try {
         const p = await api('/plugins');
         const loaded = p.loaded || [];
-        fill(pluginsEl, 
+        fill(pluginsEl,
           loaded.length ? h('div', {}, h('h3', { text: t('cfg.loaded') }), h('table', {},
             h('thead', {}, h('tr', {}, ['GUID', t('pl.name'), t('cfg.version'), t('cfg.file')].map(x => h('th', { text: x })))),
             h('tbody', {}, loaded.map(x => h('tr', {}, h('td', { class: 'mono small', text: x.guid }), h('td', { text: x.name }),
@@ -956,7 +985,7 @@ views.maintenance = {
           if (!localStorage.getItem('va_lang')) setLang(body.language);
         } catch (e) { fail(e); }
       };
-      fill(settingsEl, 
+      fill(settingsEl,
         h('h2', { text: t('mt.settings') }),
         h('h3', { text: t('mt.server') }),
         h('div', { class: 'form' },
@@ -1245,7 +1274,7 @@ function setAdmin(on) {
   $('#login-btn').hidden = on;
   $('#logout').hidden = !on;
   $('#topbar').hidden = !on;
-  if (!on) { clearTimeout(reconnectTimer); socket?.close(); }
+  if (!on) { clearTimeout(reconnectTimer); socket?.close(); poll.players = poll.eventId = null; }
 }
 
 /** Plain HTTP to a non-local, non-Tailscale address: the password would travel unencrypted. */

@@ -23,13 +23,15 @@ browser ──HTTP/WS──▶ Agent ──TCP 127.0.0.1, line JSON, secret─�
 Valheim keeps inventories and skills **on the player's machine**, so snapshots and restores only
 work for players who have the mod and are online.
 
-### Planned: two modes (release work in progress)
+### Two modes
 
-The public (Thunderstore) release adds a **standalone mode**: when no agent is present, the plugin
-serves the same panel itself (embedded HTTP server) so rented/Linux hosts work. The agent stays
-for self-hosted Windows. A public map (no login) becomes the landing page. The plan is in
-`C:\Users\Neocor\.claude\plans\lovely-doodling-llama.md` (stages 0–7); the branch
-`snapshots-v0.2` holds the pre-release 0.2.0 version. Update this file as stages land.
+- **Agent mode** (self-hosted Windows): the agent serves the panel, owns the server process and
+  stores everything in SQLite; the plugin talks to it over the bridge.
+- **Standalone mode** (rented/Linux hosts, no agent): the plugin itself serves the same panel from
+  inside the game (see "Standalone mode"), without process control.
+
+The public world map (no login) is the landing page in both modes. Branch `snapshots-v0.2` holds
+the pre-release 0.2.0 version.
 
 ## Repository layout
 
@@ -67,6 +69,7 @@ ValheimAdmin.Plugin/           plugin (net472)
   Protocol.cs                  RPC names (Rpc.*), deflate helpers, MainThread queue
   Server/AgentLink.cs          TCP client to the agent (background thread), buffering of events
   Server/Commands.cs           agent command dispatcher (runs on Unity main thread)
+  Server/Web/                  standalone web server: Http, WebAuth, LocalStore, LogCapture/GameCalls, StandaloneServer
   Server/Map/                  MapService, MapGenerator, FogTracker, MapMarkers, Png (world map)
   Server/ServerRole.cs         modded peer registry, server→client requests with timeouts, snapshot rounds, heartbeat
   Server/Hooks.cs              Harmony patches → events (join/leave/save/chat/boss/globalkey/raid/death fallback), RPC registration
@@ -259,6 +262,43 @@ mark a not-yet-cheated character (the panel asks the admin and resends with `con
   Views may return `{live, dispose}`; `route()` calls `dispose` (the map removes its timers).
 - HTTPS (optional, agent): `Https.Port` + `Https.CertificatePath` (PFX) + `Https.CertificatePassword`.
 
+## Standalone mode (plugin serves the panel, no agent)
+
+For rented/Linux hosts where only mods can be uploaded. `Web.StandaloneServer.Start()` runs from
+the `Game.Start` postfix on a dedicated server when `AgentLink.Enabled` is false (no
+`VA_AGENT_PORT`/`[Server] AgentPort`) and `[Web] Enabled` (default true). With the agent present
+the plugin never opens a web port.
+
+- `Server/Web/Http.cs`: `Request` (query, cookies, JSON body with case-insensitive keys),
+  `Router` (`/api/x/{id}` patterns, admin flag per route), `Respond`, `HttpResult`, `HttpError`.
+- `StandaloneServer`: `System.Net.HttpListener` (managed in Mono; no admin rights, works on
+  Linux) on `http://[Web] Bind:[Web] Port/`; accept thread + thread-pool handlers. **Game state is
+  only touched through `GameCalls.Command` / `GameCalls.OnMain`**, which post to `MainThread` and
+  wait. Static files come from the `web/` folder embedded in the DLL (`EmbeddedResource`, names
+  normalized from `web/vendor\leaflet\...`). Same routes and JSON shapes as the agent for: public
+  map, login/logout/me, status (synthesized: always "Running"), server/save, console (+commands),
+  logs, events, players (online/history/sessions/action), lists, items, characters/snapshots
+  (list/get/take/diff/restore), icons, configs (BepInEx/config minus the panel's own data dir),
+  plugins, map admin. `features` = map, overview, console, events, players, characters, configs
+  (no `server-control`, `maintenance`, `ws`): the panel hides start/stop and the maintenance tab and
+  **polls** `/status`, `/logs?after`, `/events` every 3 s instead of the WebSocket.
+- `WebAuth`: `[Web] AdminPassword` → PBKDF2 hash in `[Web] AdminPasswordHash` on start or on the
+  next sign-in (config reloaded, so a changed password applies without restart); if neither is set
+  a random password is logged. PBKDF2-HMAC-SHA256 is implemented by hand (Unity's Mono may lack
+  the `HashAlgorithmName` overload); verified equal to .NET's. Sessions: random token in cookie
+  `va_auth` (HttpOnly, SameSite=Strict, 30 days), SHA-256 digests persisted in `sessions.json`.
+  Lockout 5 failures / 10 min per IP, 10 attempts / min per IP, Origin check on non-GET.
+- `LocalStore` (no SQLite in the game): `[Web] DataDir` (default `BepInEx/config/ValheimAdmin`):
+  `events/YYYY-MM-DD.jsonl` (last 5000 in memory for queries), `players.json` (sessions, host),
+  `snapshots/index.json` + `snapshots/data/<hash>.json.gz` (dedup via `SnapshotRules.ContentHash`,
+  retention `[Web] SnapshotKeepAllDays/KeepDailyDays` hourly), `icons/*.png`, `audit.jsonl`,
+  `config-backups/`, `sessions.json`. Map files stay under `map/`.
+- Events: `AgentLink.Event` also calls `AgentLink.LocalEvent` (set by the standalone server), which
+  records sessions, stores snapshots, fetches icons and writes the log row via `EventText.Describe`
+  (language `[Web] Language`).
+- `LogCapture`: a BepInEx `ILogListener` ring buffer (5000 lines, includes Unity's log) for the console tab.
+- `Commands.Handle(Responder reply, cmd, args)`: one dispatcher for both the bridge and the web server.
+
 ## Web panel
 
 - `web/app.js`: tiny `h()` DOM helper, `api()` fetch wrapper (401 → back to the public map + sign-in dialog), views
@@ -279,6 +319,7 @@ Plugin (net472, runs inside the game):
 - Game objects are touched **only on the Unity main thread**. Background threads (AgentLink,
   future web server) hand work over with `MainThread.Post`; `BepInExPlugin.Update` pumps it.
 - No third-party DLLs; use `Json.cs`, not Newtonsoft/System.Text.Json (other mods ship conflicting versions).
+- Never block the Unity main thread with IO or waits; web/agent threads hand work over via `MainThread.Post`.
 - One DLL for both roles. Role checks: `ServerRole.IsServer` (dedicated server) and
   `ClientRole.IsClient` (`!ZNet.IsServer()`). RPC registration happens in `Game.Start` postfix.
 - Client handlers must validate the sender (`FromServer`) and honour `AllowServerCommands` /
@@ -295,7 +336,7 @@ Agent (net10):
 
 `agent.json` (next to the exe): see README "agent.json reference". Plugin config
 `BepInEx/config/neocor.ValheimAdmin.cfg`: `[Server] AgentPort`, `AgentSecretFile`;
-`[Client] AllowServerCommands`, `AllowRestore`; `[General] Debug`; `[Map] ...` (see World map).
+`[Client] AllowServerCommands`, `AllowRestore`; `[General] Debug`; `[Map] ...` (see World map); `[Web] ...` (see Standalone mode).
 
 ## Data folder (agent)
 

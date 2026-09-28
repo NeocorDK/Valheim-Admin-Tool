@@ -6,129 +6,135 @@ using UnityEngine;
 
 namespace ValheimAdmin
 {
-    /// <summary>Commands the agent sends to the server process. Runs on the Unity main thread.</summary>
+    /// <summary>Receives a command's answer: (ok, data, error). May be called later, from an RPC reply.</summary>
+    public delegate void Responder(bool ok, object data, string error);
+
+    /// <summary>
+    /// Commands for the server process, from the agent (AgentLink) or the plugin's own web server
+    /// (standalone mode). Runs on the Unity main thread.
+    /// </summary>
     public static class Commands
     {
-        public static void Handle(long id, string cmd, Dictionary<string, object> args)
+        public static void Handle(Responder reply, string cmd, Dictionary<string, object> args)
         {
             try
             {
                 if (cmd != "status" && !ServerRole.IsServer)
                 {
-                    AgentLink.Reply(id, false, null, "The world is not loaded yet");
+                    reply(false, null, "The world is not loaded yet");
                     return;
                 }
-                Run(id, cmd, args);
+                Run(reply, cmd, args);
             }
             catch (Exception e)
             {
                 BepInExPlugin.Warn("Command " + cmd + " failed: " + e);
-                AgentLink.Reply(id, false, null, e.Message);
+                reply(false, null, e.Message);
             }
         }
 
-        private static void Ok(long id, object data = null) => AgentLink.Reply(id, true, data);
+        private static void Ok(Responder reply, object data = null) => reply(true, data, null);
 
-        private static void Fail(long id, string error) => AgentLink.Reply(id, false, null, error);
+        private static void Fail(Responder reply, string error) => reply(false, null, error);
 
-        private static void Run(long id, string cmd, Dictionary<string, object> args)
+        private static void Run(Responder reply, string cmd, Dictionary<string, object> args)
         {
             switch (cmd)
             {
                 case "status":
-                    Ok(id, ServerRole.Stats());
+                    Ok(reply, ServerRole.Stats());
                     return;
 
                 case "players":
-                    Ok(id, Players());
+                    Ok(reply, Players());
                     return;
 
                 case "save":
                     // Returns once the save is under way; the "save" event confirms it.
                     ZNet.instance.Save(false, true, false);
-                    Ok(id, new Dictionary<string, object> { { "saving", true } });
+                    Ok(reply, new Dictionary<string, object> { { "saving", true } });
                     return;
 
                 case "shutdown":
-                    Shutdown(id, args.Str("message"));
+                    Shutdown(reply, args.Str("message"));
                     return;
 
                 case "kick":
                     ZNet.instance.Kick(Required(args, "player"));
-                    Ok(id);
+                    Ok(reply);
                     return;
 
                 case "ban":
                     ZNet.instance.Ban(Required(args, "player"));
-                    Ok(id);
+                    Ok(reply);
                     return;
 
                 case "unban":
                     ZNet.instance.Unban(Required(args, "player"));
-                    Ok(id);
+                    Ok(reply);
                     return;
 
                 case "list":
-                    Ok(id, ListOf(Required(args, "list")).GetList());
+                    Ok(reply, ListOf(Required(args, "list")).GetList());
                     return;
 
                 case "list_add":
                     ListOf(Required(args, "list")).Add(Required(args, "value"));
-                    Ok(id);
+                    Ok(reply);
                     return;
 
                 case "list_remove":
                     ListOf(Required(args, "list")).Remove(Required(args, "value"));
-                    Ok(id);
+                    Ok(reply);
                     return;
 
                 case "broadcast":
                     Broadcast(Required(args, "text"), args.Bool("center", true));
-                    Ok(id, new Dictionary<string, object> { { "recipients", ZNet.instance.GetNrOfPlayers() } });
+                    Ok(reply, new Dictionary<string, object> { { "recipients", ZNet.instance.GetNrOfPlayers() } });
                     return;
 
                 case "exec":
-                    Exec(id, Required(args, "line"));
+                    Exec(reply, Required(args, "line"));
                     return;
 
                 case "commands":
-                    Ok(id, ConsoleRunner.List());
+                    Ok(reply, ConsoleRunner.List());
                     return;
 
                 case "keys":
-                    Ok(id, ZoneSystem.instance.GetGlobalKeys());
+                    Ok(reply, ZoneSystem.instance.GetGlobalKeys());
                     return;
 
                 case "key_set":
                     ZoneSystem.instance.SetGlobalKey(Required(args, "key"));
-                    Ok(id);
+                    Ok(reply);
                     return;
 
                 case "key_remove":
                     ZoneSystem.instance.RemoveGlobalKey(Required(args, "key"));
-                    Ok(id);
+                    Ok(reply);
                     return;
 
                 case "sleep":
                     EnvMan.instance.SkipToMorning();
-                    Ok(id);
+                    Ok(reply);
                     return;
 
                 case "events":
-                    Ok(id, RandEventSystem.instance.m_events.Select(e => e.m_name).ToList());
+                    Ok(reply, RandEventSystem.instance.m_events.Select(e => e.m_name).ToList());
                     return;
 
                 case "event_start":
-                    StartEvent(id, args);
+                    StartEvent(reply, args);
                     return;
 
                 case "event_stop":
                     RandEventSystem.instance.ResetRandomEvent();
-                    Ok(id);
+                    Ok(reply);
                     return;
 
                 case "items":
-                    Ok(id, ObjectDB.instance.m_items
+                    Ok(reply, ObjectDB.instance.m_items
                         .Where(go => go != null && go.GetComponent<ItemDrop>() is ItemDrop d &&
                                      d.m_itemData.m_shared.m_icons != null && d.m_itemData.m_shared.m_icons.Length > 0)
                         .Select(go => new Dictionary<string, object>
@@ -140,7 +146,7 @@ namespace ValheimAdmin
                     return;
 
                 case "plugins":
-                    Ok(id, Chainloader.PluginInfos.Values.Select(p => new Dictionary<string, object>
+                    Ok(reply, Chainloader.PluginInfos.Values.Select(p => new Dictionary<string, object>
                     {
                         { "guid", p.Metadata.GUID },
                         { "name", p.Metadata.Name },
@@ -150,31 +156,31 @@ namespace ValheimAdmin
                     return;
 
                 case "cheat":
-                    PlayerCommand(id, args);
+                    PlayerCommand(reply, args);
                     return;
 
                 case "give":
-                    Give(id, args);
+                    Give(reply, args);
                     return;
 
                 case "snapshot":
-                    Snapshot(id, args);
+                    Snapshot(reply, args);
                     return;
 
                 case "icons":
-                    RenderIcons(id, args);
+                    RenderIcons(reply, args);
                     return;
 
                 case "restore":
                     if (!args.ContainsKey("payload")) throw new ArgumentException("payload is required");
-                    ForwardToClient(id, args, Rpc.Restore, 30f, Rpc.Pack(Json.Serialize(args["payload"])));
+                    ForwardToClient(reply, args, Rpc.Restore, 30f, Rpc.Pack(Json.Serialize(args["payload"])));
                     return;
 
                 default:
                     if (MapService.Handle(cmd, args, out object mapResult))
-                        Ok(id, mapResult);
+                        Ok(reply, mapResult);
                     else
-                        Fail(id, "Unknown command: " + cmd);
+                        Fail(reply, "Unknown command: " + cmd);
                     return;
             }
         }
@@ -226,9 +232,9 @@ namespace ValheimAdmin
         }
 
         /// <summary>Takes a last snapshot of everyone, then saves synchronously and quits.</summary>
-        private static void Shutdown(long id, string message)
+        private static void Shutdown(Responder reply, string message)
         {
-            Ok(id);
+            Ok(reply);
             if (!string.IsNullOrEmpty(message))
                 Broadcast(message, true);
             ServerRole.SnapshotAll("shutdown", () =>
@@ -248,83 +254,83 @@ namespace ValheimAdmin
                 ZRoutedRpc.instance.InvokeRoutedRPC(uid, Rpc.Chat, text);
         }
 
-        private static void StartEvent(long id, Dictionary<string, object> args)
+        private static void StartEvent(Responder reply, Dictionary<string, object> args)
         {
             string name = Required(args, "name");
             ZNetPeer peer = ServerRole.FindPeer(Required(args, "player"));
             if (peer == null)
             {
-                Fail(id, "Player is not online");
+                Fail(reply, "Player is not online");
                 return;
             }
             if (!RandEventSystem.instance.m_events.Any(e => e.m_name == name))
             {
-                Fail(id, "Unknown event: " + name);
+                Fail(reply, "Unknown event: " + name);
                 return;
             }
             RandEventSystem.instance.SetRandomEventByName(name, peer.m_refPos);
-            Ok(id);
+            Ok(reply);
         }
 
-        private static void ForwardToClient(long id, Dictionary<string, object> args, string rpc, float timeout, params object[] rpcArgs)
+        private static void ForwardToClient(Responder reply, Dictionary<string, object> args, string rpc, float timeout, params object[] rpcArgs)
         {
             ZNetPeer peer = ServerRole.FindPeer(Required(args, "player"));
             if (peer == null)
             {
-                Fail(id, "Player is not online");
+                Fail(reply, "Player is not online");
                 return;
             }
             if (!ServerRole.Modded.ContainsKey(peer.m_uid))
             {
-                Fail(id, "Player does not have the Valheim Admin mod");
+                Fail(reply, "Player does not have the Valheim Admin mod");
                 return;
             }
             ServerRole.SendToClient(peer.m_uid, rpc, timeout, (ok, json) =>
             {
                 if (ok)
-                    Ok(id, new Json.Raw(json));
+                    Ok(reply, new Json.Raw(json));
                 else
-                    Fail(id, json);
+                    Fail(reply, json);
             }, rpcArgs);
         }
 
         /// <summary>Runs a game console command (vanilla or modded) on the dedicated server itself.</summary>
-        private static void Exec(long id, string line, bool ranForPlayer = false)
+        private static void Exec(Responder reply, string line, bool ranForPlayer = false)
         {
             if (Console.instance == null)
             {
-                Fail(id, "The game console is not available on this server");
+                Fail(reply, "The game console is not available on this server");
                 return;
             }
             Terminal.ConsoleCommand cmd = ConsoleRunner.Find(line);
             if (cmd == null)
             {
-                Fail(id, "Unknown game command: " + ConsoleRunner.FirstWord(line));
+                Fail(reply, "Unknown game command: " + ConsoleRunner.FirstWord(line));
                 return;
             }
             BepInExPlugin.Log("Admin command on the server: " + line);
             var result = ConsoleRunner.Run(Console.instance, line, allowCheatMark: true);
             var data = new Dictionary<string, object> { { "output", result.Output } };
             if (ranForPlayer) data["ranOnServer"] = true;
-            Ok(id, data);
+            Ok(reply, data);
         }
 
         /// <summary>
         /// "@Player command": runs on the player's game. Commands that only the server can run come
         /// back as {runOnServer} and are run here instead.
         /// </summary>
-        private static void PlayerCommand(long id, Dictionary<string, object> args)
+        private static void PlayerCommand(Responder reply, Dictionary<string, object> args)
         {
             string line = Required(args, "command");
             ZNetPeer peer = ServerRole.FindPeer(Required(args, "player"));
             if (peer == null)
             {
-                Fail(id, "Player is not online");
+                Fail(reply, "Player is not online");
                 return;
             }
             if (!ServerRole.Modded.TryGetValue(peer.m_uid, out var mod))
             {
-                Fail(id, "Player does not have the Valheim Admin mod, so commands can't run on their game. Server commands work without it.");
+                Fail(reply, "Player does not have the Valheim Admin mod, so commands can't run on their game. Server commands work without it.");
                 return;
             }
 
@@ -332,30 +338,30 @@ namespace ValheimAdmin
             {
                 if (!ok)
                 {
-                    Fail(id, json);
+                    Fail(reply, json);
                     return;
                 }
-                Dictionary<string, object> reply = null;
+                Dictionary<string, object> answer = null;
                 try
                 {
-                    reply = Json.ParseObject(json);
+                    answer = Json.ParseObject(json);
                 }
                 catch
                 {
                 }
-                if (reply == null || !reply.Bool("runOnServer"))
+                if (answer == null || !answer.Bool("runOnServer"))
                 {
-                    Ok(id, new Json.Raw(json));
+                    Ok(reply, new Json.Raw(json));
                     return;
                 }
                 try
                 {
-                    Exec(id, line, ranForPlayer: true);
+                    Exec(reply, line, ranForPlayer: true);
                 }
                 catch (Exception e)
                 {
                     BepInExPlugin.Warn("Command " + line + " failed: " + e);
-                    Fail(id, e.Message);
+                    Fail(reply, e.Message);
                 }
             };
 
@@ -369,7 +375,7 @@ namespace ValheimAdmin
         }
 
         /// <summary>Item icons rendered by a player's game: the named player, or any online player with a 0.3+ client role.</summary>
-        private static void RenderIcons(long id, Dictionary<string, object> args)
+        private static void RenderIcons(Responder reply, Dictionary<string, object> args)
         {
             ZNetPeer peer = null;
             string player = args.Str("player");
@@ -384,18 +390,18 @@ namespace ValheimAdmin
                     }
             if (peer == null || !ServerRole.Modded.TryGetValue(peer.m_uid, out var mod) || !ServerRole.AtLeast(mod, 0, 3))
             {
-                Fail(id, "No online player with the Valheim Admin mod 0.3+ to render icons");
+                Fail(reply, "No online player with the Valheim Admin mod 0.3+ to render icons");
                 return;
             }
             string request = Json.Serialize(new Dictionary<string, object> { { "items", args.List("items") ?? new List<object>() } });
             ServerRole.SendToClient(peer.m_uid, Rpc.Icons, 30f, (ok, json) =>
             {
-                if (ok) Ok(id, new Json.Raw(json));
-                else Fail(id, json);
+                if (ok) Ok(reply, new Json.Raw(json));
+                else Fail(reply, json);
             }, Rpc.Pack(request));
         }
 
-        private static void Give(long id, Dictionary<string, object> args)
+        private static void Give(Responder reply, Dictionary<string, object> args)
         {
             string prefab = Required(args, "prefab");
             int count = Math.Max(1, args.Int("count", 1));
@@ -403,20 +409,20 @@ namespace ValheimAdmin
             GameObject go = ObjectDB.instance.GetItemPrefab(prefab);
             if (go == null || go.GetComponent<ItemDrop>() == null)
             {
-                Fail(id, "Unknown item: " + prefab);
+                Fail(reply, "Unknown item: " + prefab);
                 return;
             }
 
             ZNetPeer peer = ServerRole.FindPeer(Required(args, "player"));
             if (peer == null)
             {
-                Fail(id, "Player is not online");
+                Fail(reply, "Player is not online");
                 return;
             }
 
             if (ServerRole.Modded.ContainsKey(peer.m_uid))
             {
-                ForwardToClient(id, args, Rpc.Give, 20f, prefab, count, quality);
+                ForwardToClient(reply, args, Rpc.Give, 20f, prefab, count, quality);
                 return;
             }
 
@@ -434,36 +440,36 @@ namespace ValheimAdmin
                 drop.m_itemData.m_durability = drop.m_itemData.GetMaxDurability();
                 drop.Save();
             }
-            Ok(id, new Dictionary<string, object> { { "dropped", count } });
+            Ok(reply, new Dictionary<string, object> { { "dropped", count } });
         }
 
-        private static void Snapshot(long id, Dictionary<string, object> args)
+        private static void Snapshot(Responder reply, Dictionary<string, object> args)
         {
             string trigger = args.Str("trigger", "manual");
             string player = args.Str("player");
             if (string.IsNullOrEmpty(player))
             {
-                Ok(id, new Dictionary<string, object> { { "requested", ServerRole.SnapshotAll(trigger) } });
+                Ok(reply, new Dictionary<string, object> { { "requested", ServerRole.SnapshotAll(trigger) } });
                 return;
             }
 
             ZNetPeer peer = ServerRole.FindPeer(player);
             if (peer == null)
             {
-                Fail(id, "Player is not online");
+                Fail(reply, "Player is not online");
                 return;
             }
             if (!ServerRole.Modded.ContainsKey(peer.m_uid))
             {
-                Fail(id, "Player does not have the Valheim Admin mod");
+                Fail(reply, "Player does not have the Valheim Admin mod");
                 return;
             }
             ServerRole.RequestSnapshot(peer, trigger, (ok, json) =>
             {
                 if (ok)
-                    Ok(id, new Json.Raw(json));
+                    Ok(reply, new Json.Raw(json));
                 else
-                    Fail(id, json);
+                    Fail(reply, json);
             });
         }
     }

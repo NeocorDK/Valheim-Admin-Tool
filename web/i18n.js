@@ -9,6 +9,7 @@ const dict = {
     'err.auth': 'Please sign in',
 
     'nav.map': 'Map',
+    'ov.standalone': 'Without the agent: start and stop the server in your host\'s control panel',
     'nav.overview': 'Overview',
     'nav.console': 'Console',
     'nav.events': 'Events',
@@ -295,6 +296,7 @@ const dict = {
     'err.auth': 'Нужно войти',
 
     'nav.map': 'Карта',
+    'ov.standalone': 'Без агента: запуск и остановка сервера — в панели вашего хостинга',
     'nav.overview': 'Обзор',
     'nav.console': 'Консоль',
     'nav.events': 'События',

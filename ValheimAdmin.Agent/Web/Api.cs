@@ -50,7 +50,7 @@ public static partial class Api
 
     /// <summary>Panel sections this backend offers; the plugin's own web server offers fewer.</summary>
     private static readonly string[] features =
-        ["map", "overview", "console", "events", "players", "characters", "configs", "maintenance", "server-control", "updates", "log-archive"];
+        ["map", "overview", "console", "events", "players", "characters", "configs", "maintenance", "server-control", "updates", "log-archive", "ws"];
 
     /// <summary>A PNG with an ETag; browsers revalidate and get 304 while it is unchanged.</summary>
     private static IResult Png((string Path, long Version)? file, HttpContext ctx)

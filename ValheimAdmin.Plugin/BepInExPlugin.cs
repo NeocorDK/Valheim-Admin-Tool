@@ -32,11 +32,24 @@ namespace ValheimAdmin
 
         private static ManualLogSource logger;
 
+        public static BepInExPlugin Instance { get; private set; }
+
         public static ConfigEntry<int> AgentPort;
         public static ConfigEntry<string> AgentSecretFile;
         public static ConfigEntry<bool> AllowServerCommands;
         public static ConfigEntry<bool> AllowRestore;
         public static ConfigEntry<bool> IsDebug;
+
+        public static ConfigEntry<bool> WebEnabled;
+        public static ConfigEntry<int> WebPort;
+        public static ConfigEntry<string> WebBind;
+        public static ConfigEntry<string> WebAdminPassword;
+        public static ConfigEntry<string> WebAdminPasswordHash;
+        public static ConfigEntry<string> WebLanguage;
+        public static ConfigEntry<string> WebDataDir;
+        public static ConfigEntry<int> WebKeepAllDays;
+        public static ConfigEntry<int> WebKeepDailyDays;
+        public static ConfigEntry<string> WebIgnoreDataKeys;
 
         public static ConfigEntry<bool> MapEnabled;
         public static ConfigEntry<int> MapTextureSize;
@@ -68,6 +81,7 @@ namespace ValheimAdmin
         public void Awake()
         {
             logger = Logger;
+            Instance = this;
 
             AgentPort = Config.Bind("Server", "AgentPort", 0,
                 "Port of the Valheim Admin agent on 127.0.0.1. Only needed when the server is started without the agent; " +
@@ -79,6 +93,22 @@ namespace ValheimAdmin
             AllowRestore = Config.Bind("Client", "AllowRestore", true,
                 "Let the server admin restore items and skills of this character from a snapshot.");
             IsDebug = Config.Bind("General", "Debug", false, "Verbose logging.");
+
+            WebEnabled = Config.Bind("Web", "Enabled", true,
+                "Standalone mode: when the server runs without the Valheim Admin agent (rented hosts, Linux), serve the web panel " +
+                "from the game itself. Ignored when the agent is present; it serves the panel then.");
+            WebPort = Config.Bind("Web", "Port", 8095, "TCP port of the web panel in standalone mode. Your host must allow incoming connections to it.");
+            WebBind = Config.Bind("Web", "Bind", "*", "Address to listen on: * for all, or one IP address.");
+            WebAdminPassword = Config.Bind("Web", "AdminPassword", "",
+                "Put a new admin password here; on start (or the next sign-in) it is replaced by a hash in AdminPasswordHash. " +
+                "When neither is set, a random password is written to the BepInEx log.");
+            WebAdminPasswordHash = Config.Bind("Web", "AdminPasswordHash", "", "Hash of the admin password (PBKDF2). Clear it and set AdminPassword to change the password.");
+            WebLanguage = Config.Bind("Web", "Language", "en", new ConfigDescription("Language of event log texts.", new AcceptableValueList<string>("en", "ru")));
+            WebDataDir = Config.Bind("Web", "DataDir", "", "Folder for the event log, snapshots and icons in standalone mode. Empty = BepInEx/config/ValheimAdmin.");
+            WebKeepAllDays = Config.Bind("Web", "SnapshotKeepAllDays", 3, "Keep every snapshot this many days (standalone mode).");
+            WebKeepDailyDays = Config.Bind("Web", "SnapshotKeepDailyDays", 60, "Then keep one snapshot per day for this many days (standalone mode).");
+            WebIgnoreDataKeys = Config.Bind("Web", "IgnoreDataKeys", "",
+                "Comma-separated item custom data keys (or prefix*) that Compare ignores (standalone mode), for mods that change item data during play.");
 
             MapEnabled = Config.Bind("Map", "Enabled", true,
                 "Draw the world map on the dedicated server for the web panel. The admin always sees the whole map, also with the nomap world key.");
@@ -109,6 +139,7 @@ namespace ValheimAdmin
         public void OnDestroy()
         {
             AgentLink.Stop();
+            Web.StandaloneServer.Stop();
         }
     }
 }

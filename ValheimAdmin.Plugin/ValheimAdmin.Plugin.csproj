@@ -20,8 +20,9 @@
     <BepInExPath>$(ValheimPath)\BepInEx\core</BepInExPath>
   </PropertyGroup>
 
-  <!-- Logic shared with the agent, compiled into both. -->
+  <!-- Logic shared with the agent, compiled into both. The panel is embedded for standalone mode. -->
   <ItemGroup>
+    <EmbeddedResource Include="..\web\**" LogicalName="web/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ValheimAdmin.Common\**\*.cs" Link="Common\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 

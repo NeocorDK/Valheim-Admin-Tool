@@ -31,6 +31,9 @@ namespace ValheimAdmin
         private static bool refusedLogged;
 
         public static bool Enabled => thread != null;
+
+        /// <summary>Also receives every event; set by the plugin's own web server in standalone mode.</summary>
+        public static Action<string, Dictionary<string, object>> LocalEvent;
         public static bool Connected { get; private set; }
 
         public static void Start()
@@ -166,7 +169,7 @@ namespace ValheimAdmin
             long id = msg.Long("id");
             string cmd = msg.Str("cmd", "");
             var args = msg.Obj("args") ?? new Dictionary<string, object>();
-            MainThread.Post(() => Commands.Handle(id, cmd, args));
+            MainThread.Post(() => Commands.Handle((ok, data, error) => Reply(id, ok, data, error), cmd, args));
         }
 
         /// <summary>Sends a message. Events are buffered while the agent is away; everything else is dropped.</summary>
@@ -211,6 +214,7 @@ namespace ValheimAdmin
 
         public static void Event(string kind, Dictionary<string, object> data)
         {
+            LocalEvent?.Invoke(kind, data);
             Send(new Dictionary<string, object>
             {
                 { "t", "ev" },
