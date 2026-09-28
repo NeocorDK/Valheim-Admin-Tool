@@ -51,6 +51,8 @@ ValheimAdmin.Agent/            agent (net10.0, Microsoft.NET.Sdk.Web)
   Server/EventService.cs       plugin events → events table + live push; stores snapshots
   Snapshots/SnapshotLogic.cs   pure functions: content hash, diff, retention, restore payload, Epic Loot parse
   Snapshots/SnapshotStore.cs   dedup storage (snapshot_data by hash, deflated JSON)
+  Snapshots/EpicLootAdapter.cs optional Epic Loot rarity/effects for the panel
+  Snapshots/IconStore.cs       item icon cache (icons table), fetched from players' games
   Web/Api.cs                   every HTTP route
   Web/LiveHub.cs               WebSocket broadcast (status, log, event, players, snapshot)
   Web/StatusPump.cs            status every 2 s; StatusBuilder; LoginGuard (5 fails → 10 min lock per IP)
@@ -66,7 +68,8 @@ ValheimAdmin.Plugin/           plugin (net472)
   Server/Hooks.cs              Harmony patches → events (join/leave/save/chat/boss/globalkey/raid/death fallback), RPC registration
   ConsoleRunner.cs             runs game console commands with output capture and the cheat-check overrides (both roles)
   Client/ClientRole.cs         client RPC handlers: console command, give, snapshot, restore, chat line
-  Client/Snapshot.cs           Snapshot.Build + Restorer
+  Client/Snapshot.cs           Snapshot.Build, ItemBytes (game item serialization), ExtraInventories, Restorer
+  Client/Icons.cs              renders item icons to PNG for the panel
   Client/Texts.cs              in-game messages (ru if the game runs in Russian)
 package/thunderstore/          manifest.json, icon.png, README.md for the Thunderstore package
 package.ps1                    release build: tests → plugin → self-contained agent → two zips in dist/
@@ -115,7 +118,7 @@ requests time out in `ServerRole.Update`, and are failed when the peer disconnec
 
 `VA_Hello` (client→server on spawn: version, characterId, name), `VA_Reply`, `VA_Death`,
 `VA_Cmd` (console line, 0.2 protocol), `VA_Run` (JSON `{line, confirmCheats}`), `VA_Give` (prefab, count, quality), `VA_SnapReq` (trigger),
-`VA_Restore` (payload), `VA_Chat` (server message line in chat).
+`VA_Restore` (payload), `VA_Chat` (server message line in chat), `VA_Icons` (render item icons).
 
 ## Commands (panel console → bridge → plugin)
 
@@ -165,30 +168,51 @@ mark a not-yet-cheated character (the panel asks the admin and resends with `con
 - `ShowMessage` is registered by `MessageHud` as `<int type, string text>`.
 - `ZNet.Save(bool sync, bool saveOtherPlayerProfiles = false, bool waitForNextFrame = false)`.
 
-## Snapshots
+## Snapshots (mod-agnostic)
 
 - Taken by the client role (`Snapshot.Build`) on every world save (`ZNet.SaveWorld` postfix →
   `SnapshotAll("save")`), on demand, and as `pre-restore` before a restore. `live` snapshots (used
   by *Compare*) are not stored.
-- JSON (`v`=1): `name`, `characterId` (`PlayerProfile.GetPlayerID()`), `inventory {w,h}`,
-  `items[]`, `skills[]`, `health`, `pos`, `trigger`, `takenAt`.
-  Item: `prefab` (m_dropPrefab.name), `token`, `label` (localized), `tooltip` (localized
-  `GetTooltip(-1)`, so mods that patch tooltips show up), `itemType`, `maxStack`, `stack`,
-  `durability`, `maxDurability`, `x`, `y`, `equipped`, `quality`, `variant`, `crafterId`,
-  `crafterName`, `worldLevel`, `pickedUp`, `data` (the whole `m_customData`).
-  Skill: `type` (int of `Skills.SkillType`), `name` (enum ToString), `level`, `acc`.
-- Storage (agent): `snapshots` rows point at `snapshot_data` by `ContentHash` (SHA-256 of the fields
-  a restore can bring back, customData with sorted keys, skill levels rounded to 0.01). Unchanged
-  snapshots cost one row. Retention: everything for `KeepAllDays`, then the last of each local day
-  for `KeepDailyDays`, never the newest per character.
-- Diff: non-stackable items (or anything with customData) must match `prefab|quality|variant|customData`;
-  stackable plain items compare total counts per `prefab|quality`.
-- Restore: agent builds `{mode add|replace, items, skills, skillMode none|raise|set}`; the client
-  recreates items with `ObjectDB.GetItemPrefab` + `Clone()` + fields + customData, places them at
-  their slot (replace) or anywhere, drops what does not fit, re-equips (replace). Skills by int type.
-- Mod-specific code today: `SnapshotLogic.Magic` parses Epic Loot's `MagicItemComponent`
-  customData for rarity/effects (panel colours). Everything else is generic. Stage 3 of the plan
-  makes restore go through `Inventory.Load` and isolates Epic Loot into an adapter.
+- JSON `v`=2 (v1 = no `raw`/`itemVersion`/`containers`/`playerData`/`displayName`; still restorable):
+  `name`, `characterId` (`PlayerProfile.GetPlayerID()`), `itemVersion` (header int of
+  `Inventory.Save`, read at runtime), `inventory {w,h}`, `containers [{key,w,h}]`, `items[]`,
+  `skills[]`, `playerData` (`Player.m_customData`, view only, never restored), `health`, `pos`,
+  `trigger`, `takenAt`.
+  - Item: `prefab`, `token`, `label`, `tooltip` (localized `GetTooltip(-1)`, so mods that patch
+    tooltips show up), `itemType`, `maxStack`, `stack`, `durability`, `maxDurability`, `x`, `y`,
+    `equipped`, `quality`, `variant`, `crafterId`, `crafterName`, `worldLevel`, `pickedUp`,
+    `cheated` (`m_cheated`, achievements), `data` (whole `m_customData`), `raw` (base64 of
+    `ItemDrop.ItemData.Save`), `container` (only for items in a mod inventory).
+  - Skill: `type` (int of `Skills.SkillType`; SkillManager skills are hashes), `name`, `displayName`
+    (`Localize("$skill_" + type.ToLower())`, same as the skills dialog), `level`, `acc`.
+- Mod inventories: `ExtraInventories.Find` reflects over non-game components on the player
+  GameObject for `Inventory` fields other than the main one (key `Type.FullName.field`). Mods that
+  only enlarge the main inventory are covered by the main grid anyway.
+- Items without `m_dropPrefab` are resolved by name token (`ItemBytes.FindPrefab`).
+- Storage (agent): `snapshots` rows point at `snapshot_data` by `ContentHash` (SHA-256 of the
+  fields a restore can bring back incl. `container`/`cheated`, customData with sorted keys, skill
+  levels rounded to 0.01). Unchanged snapshots cost one row. Retention: everything for
+  `KeepAllDays`, then the last of each local day for `KeepDailyDays`, never the newest per character.
+- Diff (`SnapshotLogic.Diff`): items that do not stack, or carry customData, must match
+  `prefab|quality|variant|customData` minus `Snapshots.IgnoreDataKeys` (exact or `prefix*`);
+  stackable plain items compare totals per `prefab|quality`. A lost item is flagged `similar` when
+  the character still has an unmatched item of the same prefab/quality/variant (enchantment or mod
+  data differs) — it stays "missing".
+- Restore: the agent builds `{mode, itemVersion, containers, items, skills, skillMode}`. The client
+  rebuilds each item from `raw` via `Inventory.Load` into a scratch inventory (`ItemBytes.Load`, the
+  path the game uses for saved characters, so mods hooking item loading behave) and falls back to
+  `ObjectDB` + `Clone()` + fields for v1 snapshots. A reduced stack overrides `m_stack`. Replace mode
+  empties the main inventory and the listed mod inventories, then places items at their slots;
+  everything else is added or dropped at the player's feet. Skills: `GetSkillDef(type)` is checked
+  first — **`Skills.GetSkill` on an unknown type stores a Skill with null info and breaks the
+  character**, so a skill whose mod is missing goes to `failed`.
+- Icons: `VA_Icons` asks any online 0.3+ client to render `m_icons[variant]` to 64×64 PNG
+  (`Icons.Render`: blit sprite rect to a RenderTexture, ReadPixels, EncodeToPNG). The agent's
+  `IconStore` keeps them in the `icons` table and fetches missing ones after each stored snapshot
+  and when a snapshot is opened; `/api/icons/{prefab}/{variant}`. The server itself cannot render
+  (`-nographics`).
+- Only mod-specific code: `EpicLootAdapter` reads Epic Loot's `MagicItemComponent` for rarity
+  colours/effects in the panel (`AdminService.Enrich`). Nothing else depends on it.
 
 ## Web panel
 
@@ -244,6 +268,6 @@ both sides; set `[General] Debug = true` for verbose plugin logs.
 
 - The agent is Windows-only (service, Ctrl+C helper, DPAPI, Tailscale detection).
 - Agent and plugin must be updated together; there is no protocol version negotiation yet.
-- Items from mods that keep state outside `m_customData` may not restore completely.
+- Items from mods that keep state outside the item itself (neither `m_customData` nor the item bytes) may not restore completely.
 - `ZNet.IsDedicated()` gates the server role; a listen-server host gets neither role's server side.
 - Snapshots of players without the mod are impossible (data is client-side).

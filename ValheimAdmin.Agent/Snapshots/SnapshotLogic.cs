@@ -5,14 +5,14 @@ using System.Text.Json.Nodes;
 
 namespace ValheimAdmin.Agent.Snapshots;
 
-public sealed record MagicEffect(string Type, double Value);
+/// <summary>
+/// How many of a snapshot item are missing from the character now. Similar: the character has an
+/// item of the same prefab, quality and variant whose custom data differs (another enchantment,
+/// or mod data that changed).
+/// </summary>
+public sealed record ItemDiff(int Index, int Missing, bool Similar = false);
 
-public sealed record MagicInfo(int Rarity, string RarityName, string? DisplayName, string? LegendaryId, string? SetId, List<MagicEffect> Effects);
-
-/// <summary>How many of a snapshot item are missing from the character now.</summary>
-public sealed record ItemDiff(int Index, int Missing);
-
-public sealed record SkillDiff(int Type, string Name, double SnapshotLevel, double CurrentLevel);
+public sealed record SkillDiff(int Type, string Name, double SnapshotLevel, double CurrentLevel, string? DisplayName = null);
 
 public sealed record RestoreItem(int Index, int? Stack);
 
@@ -22,10 +22,8 @@ public sealed record RestoreItem(int Index, int? Stack);
 /// </summary>
 public static class SnapshotLogic
 {
-    public static readonly string[] RarityNames = ["Magic", "Rare", "Epic", "Legendary", "Mythic"];
-
     private static readonly string[] itemFields =
-        ["prefab", "stack", "durability", "x", "y", "equipped", "quality", "variant", "crafterId", "crafterName", "worldLevel", "pickedUp"];
+        ["prefab", "container", "stack", "durability", "x", "y", "equipped", "quality", "variant", "crafterId", "crafterName", "worldLevel", "pickedUp", "cheated"];
 
     public static JsonArray Items(JsonObject snap) => snap["items"] as JsonArray ?? [];
 
@@ -48,67 +46,33 @@ public static class SnapshotLogic
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
     }
 
-    /// <summary>customData with sorted keys, so equal data compares equal.</summary>
-    public static string CanonicalData(JsonObject item)
+    /// <summary>customData with sorted keys, so equal data compares equal. Ignored keys are left out.</summary>
+    public static string CanonicalData(JsonObject item, IReadOnlyCollection<string>? ignore = null)
     {
         if (item["data"] is not JsonObject data || data.Count == 0) return "";
         var sb = new StringBuilder();
         foreach (var kv in data.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            if (IsIgnored(kv.Key, ignore)) continue;
             sb.Append(kv.Key).Append('=').Append(kv.Value?.ToJsonString()).Append(';');
+        }
         return sb.ToString();
     }
 
-    /// <summary>Reads the Epic Loot magic item stored in the item's customData, if any.</summary>
-    public static MagicInfo? Magic(JsonObject item)
+    /// <summary>Exact key, or a prefix when the pattern ends with '*'.</summary>
+    public static bool IsIgnored(string key, IReadOnlyCollection<string>? ignore)
     {
-        if (item["data"] is not JsonObject data) return null;
-        foreach (var kv in data)
+        if (ignore == null || ignore.Count == 0) return false;
+        foreach (string pattern in ignore)
         {
-            if (!kv.Key.Contains("MagicItemComponent", StringComparison.OrdinalIgnoreCase)) continue;
-            string? json = kv.Value?.GetValueKind() == JsonValueKind.String ? kv.Value.GetValue<string>() : kv.Value?.ToJsonString();
-            if (string.IsNullOrWhiteSpace(json)) continue;
-            try
-            {
-                if (JsonNode.Parse(json) is not JsonObject magic) continue;
-                int rarity = RarityOf(Get(magic, "Rarity"));
-                var effects = new List<MagicEffect>();
-                if (Get(magic, "Effects") is JsonArray arr)
-                {
-                    foreach (JsonObject e in arr.OfType<JsonObject>())
-                        effects.Add(new MagicEffect(Get(e, "EffectType")?.ToString() ?? "?", NumberOf(Get(e, "EffectValue"))));
-                }
-                return new MagicInfo(rarity, rarity >= 0 && rarity < RarityNames.Length ? RarityNames[rarity] : rarity.ToString(),
-                    NullIfEmpty(Get(magic, "DisplayName")?.ToString()), NullIfEmpty(Get(magic, "LegendaryID")?.ToString()),
-                    NullIfEmpty(Get(magic, "SetID")?.ToString()), effects);
-            }
-            catch (JsonException)
-            {
-            }
+            if (string.IsNullOrEmpty(pattern)) continue;
+            if (pattern.EndsWith('*') ? key.StartsWith(pattern[..^1], StringComparison.Ordinal) : key == pattern) return true;
         }
-        return null;
+        return false;
     }
 
-    private static string? NullIfEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;
-
-    private static JsonNode? Get(JsonObject o, string name)
-    {
-        foreach (var kv in o)
-            if (string.Equals(kv.Key, name, StringComparison.OrdinalIgnoreCase))
-                return kv.Value;
-        return null;
-    }
-
-    private static int RarityOf(JsonNode? node)
-    {
-        if (node == null) return 0;
-        if (node.GetValueKind() == JsonValueKind.Number) return node.GetValue<int>();
-        string s = node.ToString();
-        int i = Array.FindIndex(RarityNames, r => r.Equals(s, StringComparison.OrdinalIgnoreCase));
-        return i >= 0 ? i : int.TryParse(s, out int n) ? n : 0;
-    }
-
-    private static double NumberOf(JsonNode? node) =>
-        node?.GetValueKind() == JsonValueKind.Number ? node.GetValue<double>() : double.TryParse(node?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out double d) ? d : 0;
+    /// <summary>Epic Loot data of the item, if any (see <see cref="EpicLootAdapter"/>).</summary>
+    public static MagicInfo? Magic(JsonObject item) => EpicLootAdapter.Read(item);
 
     /// <summary>Short description for snapshot lists.</summary>
     public static JsonObject Summary(JsonObject snap)
@@ -120,6 +84,7 @@ public static class SnapshotLogic
         return new JsonObject
         {
             ["items"] = items.Count,
+            ["special"] = items.Count(i => i["data"] is JsonObject d && d.Count > 0),
             ["equipped"] = new JsonArray(items.Where(i => i["equipped"]?.GetValue<bool>() == true)
                 .Select(i => (JsonNode?)JsonValue.Create(Str(i, "label") ?? Str(i, "prefab"))).ToArray()),
             ["magic"] = magic,
@@ -129,27 +94,28 @@ public static class SnapshotLogic
 
     /// <summary>
     /// Snapshot items that the live character lacks. Items that do not stack must match exactly,
-    /// including their customData (enchantments); stackable items compare total counts.
+    /// including their customData (enchantments, mod data) minus the ignored keys; stackable items
+    /// compare total counts.
     /// </summary>
-    public static List<ItemDiff> Diff(JsonObject snapshot, JsonObject live)
+    public static List<ItemDiff> Diff(JsonObject snapshot, JsonObject live, IReadOnlyCollection<string>? ignoreKeys = null)
     {
-        var liveItems = Items(live).OfType<JsonObject>().ToList();
         var unique = new Dictionary<string, int>();
         var stacks = new Dictionary<string, int>();
-        foreach (JsonObject item in liveItems)
+        foreach (JsonObject item in Items(live).OfType<JsonObject>())
         {
-            if (IsStackable(item))
+            if (IsStackable(item, ignoreKeys))
                 stacks[StackKey(item)] = stacks.GetValueOrDefault(StackKey(item)) + Int(item, "stack");
             else
-                unique[UniqueKey(item)] = unique.GetValueOrDefault(UniqueKey(item)) + 1;
+                unique[UniqueKey(item, ignoreKeys)] = unique.GetValueOrDefault(UniqueKey(item, ignoreKeys)) + 1;
         }
 
         var result = new List<ItemDiff>();
+        var unmatched = new List<(int Index, JsonObject Item)>();
         var snapItems = Items(snapshot);
         for (int i = 0; i < snapItems.Count; i++)
         {
             if (snapItems[i] is not JsonObject item) continue;
-            if (IsStackable(item))
+            if (IsStackable(item, ignoreKeys))
             {
                 string key = StackKey(item);
                 int have = stacks.GetValueOrDefault(key);
@@ -160,12 +126,26 @@ public static class SnapshotLogic
             }
             else
             {
-                string key = UniqueKey(item);
+                string key = UniqueKey(item, ignoreKeys);
                 int have = unique.GetValueOrDefault(key);
                 if (have > 0) unique[key] = have - 1;
-                else result.Add(new ItemDiff(i, Math.Max(1, Int(item, "stack"))));
+                else unmatched.Add((i, item));
             }
         }
+
+        // Live items nobody matched, by prefab|quality|variant, flag a loss as "similar".
+        var leftovers = new Dictionary<string, int>();
+        foreach (var (key, count) in unique)
+            if (count > 0)
+                leftovers[LooseKey(key)] = leftovers.GetValueOrDefault(LooseKey(key)) + count;
+        foreach (var (index, item) in unmatched)
+        {
+            string loose = LooseKey(UniqueKey(item, ignoreKeys));
+            bool similar = leftovers.GetValueOrDefault(loose) > 0;
+            if (similar) leftovers[loose]--;
+            result.Add(new ItemDiff(index, Math.Max(1, Int(item, "stack")), similar));
+        }
+        result.Sort((a, b) => a.Index.CompareTo(b.Index));
         return result;
     }
 
@@ -173,17 +153,30 @@ public static class SnapshotLogic
     {
         var current = Skills(live).OfType<JsonObject>().ToDictionary(s => Int(s, "type"), s => Dbl(s, "level"));
         return Skills(snapshot).OfType<JsonObject>()
-            .Select(s => new SkillDiff(Int(s, "type"), Str(s, "name") ?? "", Dbl(s, "level"), current.GetValueOrDefault(Int(s, "type"))))
+            .Select(s => new SkillDiff(Int(s, "type"), Str(s, "name") ?? "", Dbl(s, "level"), current.GetValueOrDefault(Int(s, "type")), Str(s, "displayName")))
             .Where(d => d.SnapshotLevel - d.CurrentLevel > 0.01)
             .ToList();
     }
 
-    private static bool IsStackable(JsonObject item) => Int(item, "maxStack") > 1 && (item["data"] is not JsonObject d || d.Count == 0);
+    private static bool IsStackable(JsonObject item, IReadOnlyCollection<string>? ignore) =>
+        Int(item, "maxStack") > 1 && CanonicalData(item, ignore).Length == 0;
 
     private static string StackKey(JsonObject item) => $"{Str(item, "prefab")}|{Int(item, "quality")}";
 
-    private static string UniqueKey(JsonObject item) =>
-        $"{Str(item, "prefab")}|{Int(item, "quality")}|{Int(item, "variant")}|{CanonicalData(item)}";
+    private static string UniqueKey(JsonObject item, IReadOnlyCollection<string>? ignore) =>
+        $"{Str(item, "prefab")}|{Int(item, "quality")}|{Int(item, "variant")}|{CanonicalData(item, ignore)}";
+
+    /// <summary>prefab|quality|variant part of a unique key.</summary>
+    private static string LooseKey(string uniqueKey)
+    {
+        int bar = -1;
+        for (int n = 0; n < 3; n++)
+        {
+            bar = uniqueKey.IndexOf('|', bar + 1);
+            if (bar < 0) return uniqueKey;
+        }
+        return uniqueKey[..bar];
+    }
 
     /// <summary>
     /// Snapshot ids to delete: keep everything younger than keepAllDays, the latest snapshot
@@ -236,6 +229,8 @@ public static class SnapshotLogic
         return new JsonObject
         {
             ["mode"] = mode,
+            ["itemVersion"] = snapshot["itemVersion"]?.DeepClone(),
+            ["containers"] = snapshot["containers"]?.DeepClone() ?? new JsonArray(),
             ["items"] = selected,
             ["skills"] = Skills(snapshot).DeepClone(),
             ["skillMode"] = skillMode,

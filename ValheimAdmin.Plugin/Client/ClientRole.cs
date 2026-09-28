@@ -19,6 +19,7 @@ namespace ValheimAdmin
             ZRoutedRpc.instance.Register<long, string>(Rpc.SnapshotRequest, RPC_SnapshotRequest);
             ZRoutedRpc.instance.Register<long, ZPackage>(Rpc.Restore, RPC_Restore);
             ZRoutedRpc.instance.Register<string>(Rpc.Chat, RPC_Chat);
+            ZRoutedRpc.instance.Register<long, ZPackage>(Rpc.Icons, RPC_Icons);
         }
 
         private static bool IsClient => ZNet.instance != null && !ZNet.instance.IsServer();
@@ -236,6 +237,21 @@ namespace ValheimAdmin
             {
                 BepInExPlugin.Warn("Restore failed: " + e);
                 Reply(requestId, false, "Restore failed: " + e.Message);
+            }
+        }
+
+        private static void RPC_Icons(long sender, long requestId, ZPackage payload)
+        {
+            if (!FromServer(sender)) return;
+            try
+            {
+                var request = Json.ParseObject(Rpc.Unpack(payload));
+                Reply(requestId, true, Icons.Render(request.List("items")));
+            }
+            catch (Exception e)
+            {
+                BepInExPlugin.Warn("Icon rendering failed: " + e);
+                Reply(requestId, false, "Icon rendering failed: " + e.Message);
             }
         }
 

@@ -31,6 +31,8 @@ namespace ValheimAdmin
         public const string Restore = "VA_Restore";
         /// <summary>server -> client: string text</summary>
         public const string Chat = "VA_Chat";
+        /// <summary>server -> client: long reqId, ZPackage payload (deflated JSON {items: [{prefab, variant}]}); reply {"prefab|variant": png}</summary>
+        public const string Icons = "VA_Icons";
 
         public static ZPackage Pack(string json)
         {

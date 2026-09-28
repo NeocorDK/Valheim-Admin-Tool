@@ -88,11 +88,52 @@ public class SnapshotLogicTests
     [Fact]
     public void Diff_FindsLostEnchantedItemEvenIfSamePrefabRemains()
     {
-        // The player still has an iron sword, but not the enchanted one.
+        // The player still has an iron sword, but not the enchanted one: missing, flagged as similar.
         var snapshot = Snap(1, Item("SwordIron", magic: EpicSword), Item("Wood", 50, 50, x: 1));
         var live = Snap(1, Item("SwordIron", x: 3), Item("Wood", 50, 50, x: 1));
         var diff = SnapshotLogic.Diff(snapshot, live);
-        Assert.Equal([new ItemDiff(0, 1)], diff);
+        Assert.Equal([new ItemDiff(0, 1, Similar: true)], diff);
+    }
+
+    [Fact]
+    public void Diff_LostItemWithoutLookAlikeIsNotSimilar()
+    {
+        var snapshot = Snap(1, Item("SwordIron", magic: EpicSword), Item("AxeBronze", x: 1));
+        var live = Snap(1, Item("AxeBronze", x: 1));
+        Assert.Equal([new ItemDiff(0, 1)], SnapshotLogic.Diff(snapshot, live));
+    }
+
+    [Fact]
+    public void Diff_IgnoresConfiguredDataKeys()
+    {
+        // A mod that stores a changing counter on the item must not make the item look lost.
+        var before = Item("KnifeBlackMetal");
+        before["data"]!["SomeMod.lastUsed"] = "100";
+        before["data"]!["Jewelcrafting.Sockets"] = "Ruby";
+        var after = Item("KnifeBlackMetal", x: 2);
+        after["data"]!["SomeMod.lastUsed"] = "250";
+        after["data"]!["Jewelcrafting.Sockets"] = "Ruby";
+
+        List<ItemDiff> Diff(string[]? ignore = null) =>
+            SnapshotLogic.Diff(Snap(1, (JsonObject)before.DeepClone()), Snap(1, (JsonObject)after.DeepClone()), ignore);
+
+        Assert.Single(Diff());
+        Assert.Empty(Diff(["SomeMod.lastUsed"]));
+        Assert.Empty(Diff(["SomeMod.*"]));
+
+        // Different sockets are a different item even when the counter is ignored.
+        after["data"]!["Jewelcrafting.Sockets"] = "Emerald";
+        var d = Assert.Single(Diff(["SomeMod.*"]));
+        Assert.True(d.Similar);
+    }
+
+    [Fact]
+    public void Diff_StackableItemWithOnlyIgnoredDataStacks()
+    {
+        var a = Item("Coins", 60, 999);
+        a["data"]!["tmp"] = "1";
+        var live = Snap(1, Item("Coins", 60, 999, x: 4));
+        Assert.Empty(SnapshotLogic.Diff(Snap(1, a), live, ["tmp"]));
     }
 
     [Fact]
@@ -139,6 +180,42 @@ public class SnapshotLogicTests
     }
 
     [Fact]
+    public void BuildRestore_CarriesItemBytesVersionAndModInventories()
+    {
+        var sword = Item("SwordIron");
+        sword["raw"] = "AAAA";
+        var slot = Item("BeltStrength");
+        slot["container"] = "SomeMod.Equipment.m_inventory";
+        var snapshot = Snap(1, sword, slot);
+        snapshot["itemVersion"] = 109;
+        snapshot["containers"] = new JsonArray(new JsonObject { ["key"] = "SomeMod.Equipment.m_inventory", ["w"] = 4, ["h"] = 1 });
+
+        var payload = SnapshotLogic.BuildRestore(snapshot, "replace", null, "none");
+        Assert.Equal(109, payload["itemVersion"]!.GetValue<int>());
+        Assert.Equal("SomeMod.Equipment.m_inventory", payload["containers"]![0]!["key"]!.GetValue<string>());
+        Assert.Equal("AAAA", payload["items"]![0]!["raw"]!.GetValue<string>());
+        Assert.Equal("SomeMod.Equipment.m_inventory", payload["items"]![1]!["container"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void BuildRestore_OldSnapshotsHaveNoItemVersion()
+    {
+        var payload = SnapshotLogic.BuildRestore(Snap(1, Item("Wood", 5, 50)), "add", null, "none");
+        Assert.Null(payload["itemVersion"]);
+        Assert.Empty(payload["containers"]!.AsArray());
+    }
+
+    [Fact]
+    public void DiffSkills_KeepsGameSkillNames()
+    {
+        var snapshot = Snap(1);
+        ((JsonObject)snapshot["skills"]![0]!)["displayName"] = "Мечи";
+        var live = Snap(1);
+        ((JsonObject)live["skills"]![0]!)["level"] = 10.0;
+        Assert.Equal("Мечи", Assert.Single(SnapshotLogic.DiffSkills(snapshot, live)).DisplayName);
+    }
+
+    [Fact]
     public void BuildRestore_AllItemsKeepCustomData()
     {
         var snapshot = Snap(1, Item("SwordIron", magic: EpicSword), Item("Wood", 50, 50, x: 1));
@@ -155,6 +232,7 @@ public class SnapshotLogicTests
         var s = SnapshotLogic.Summary(Snap(1, Item("SwordIron", magic: EpicSword, equipped: true), Item("Wood", 50, 50, x: 1)));
         Assert.Equal(2, s["items"]!.GetValue<int>());
         Assert.Equal(1, s["magic"]!["Epic"]!.GetValue<int>());
+        Assert.Equal(1, s["special"]!.GetValue<int>());
         Assert.Equal("SwordIron", s["equipped"]![0]!.GetValue<string>());
         Assert.Equal(60.5, s["skillTotal"]!.GetValue<double>());
     }
@@ -175,6 +253,18 @@ public class SnapshotLogicTests
         };
         var delete = SnapshotLogic.Retention(rows, now, 3, 60, tz);
         Assert.Equal([5L, 6L, 7L, 9L], delete.Order());
+    }
+
+    [Fact]
+    public void ContentHash_SeesCheatedFlagAndContainer()
+    {
+        var plain = Snap(1, Item("SwordIron"));
+        var cheated = Item("SwordIron");
+        cheated["cheated"] = true;
+        var moved = Item("SwordIron");
+        moved["container"] = "SomeMod.Slots.m_inventory";
+        Assert.NotEqual(SnapshotLogic.ContentHash(plain), SnapshotLogic.ContentHash(Snap(1, cheated)));
+        Assert.NotEqual(SnapshotLogic.ContentHash(plain), SnapshotLogic.ContentHash(Snap(1, moved)));
     }
 
     [Fact]

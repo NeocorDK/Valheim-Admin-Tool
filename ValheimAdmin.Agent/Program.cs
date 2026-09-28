@@ -75,6 +75,7 @@ builder.Services.AddSingleton(config);
 builder.Services.AddSingleton(new Db(Path.Combine(config.DataPath, "valheim-admin.db")));
 builder.Services.AddSingleton<LiveHub>();
 builder.Services.AddSingleton<SnapshotStore>();
+builder.Services.AddSingleton<IconStore>();
 builder.Services.AddSingleton<ConfigFiles>();
 builder.Services.AddSingleton<LoginGuard>();
 builder.Services.AddSingletonHosted<PluginBridge>();

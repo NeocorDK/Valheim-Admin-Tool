@@ -45,6 +45,11 @@ public sealed class SnapshotRetention
 {
     public int KeepAllDays { get; set; } = 3;
     public int KeepDailyDays { get; set; } = 60;
+    /// <summary>
+    /// customData keys (or "prefix*") that mods change during normal play; Compare ignores them
+    /// so an item is not reported as lost just because such a value changed.
+    /// </summary>
+    public List<string> IgnoreDataKeys { get; set; } = [];
 }
 
 public sealed class AgentConfig

@@ -276,10 +276,11 @@ public static partial class Api
 
         api.MapGet("/characters/{id:long}/snapshots", (long id, SnapshotStore store) => store.List(id));
 
-        api.MapGet("/snapshots/{id:long}", (long id, SnapshotStore store) => Run(object? () =>
+        api.MapGet("/snapshots/{id:long}", (long id, SnapshotStore store, IconStore icons) => Run(object? () =>
         {
             var row = store.Row(id) ?? throw new KeyNotFoundException();
             var content = store.Content(id) ?? throw new KeyNotFoundException();
+            icons.EnsureFor(content);
             return new { row, content = AdminService.Enrich(content) };
         }));
 
@@ -291,6 +292,14 @@ public static partial class Api
             await bridge.RequestAsync("snapshot", args, TimeSpan.FromSeconds(40));
             return null;
         }));
+
+        api.MapGet("/icons/{prefab}/{variant:int}", (string prefab, int variant, IconStore icons, HttpContext ctx) =>
+        {
+            byte[]? png = icons.Get(prefab, variant);
+            if (png == null) return Results.NotFound();
+            ctx.Response.Headers.CacheControl = "private, max-age=86400";
+            return Results.File(png, "image/png");
+        });
 
         api.MapGet("/snapshots/{id:long}/diff", (long id, AdminService admin) => Run(async () => await admin.DiffAsync(id)));
 

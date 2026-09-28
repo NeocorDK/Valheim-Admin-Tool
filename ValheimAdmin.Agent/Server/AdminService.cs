@@ -15,13 +15,15 @@ public sealed class AdminService
     private readonly SnapshotStore snapshots;
     private readonly EventService events;
     private readonly Db db;
+    private readonly AgentConfig config;
     private JsonArray? items;
     private JsonArray? gameCommands;
     private JsonArray players = [];
     private DateTimeOffset playersAt = DateTimeOffset.MinValue;
 
-    public AdminService(PluginBridge bridge, SnapshotStore snapshots, EventService events, Db db)
+    public AdminService(PluginBridge bridge, SnapshotStore snapshots, EventService events, Db db, AgentConfig config)
     {
+        this.config = config;
         this.bridge = bridge;
         this.snapshots = snapshots;
         this.events = events;
@@ -107,7 +109,7 @@ public sealed class AdminService
         var live = await LiveSnapshotAsync(SnapshotLogic.Str(player, "player")!, "live");
         return new
         {
-            items = SnapshotLogic.Diff(content, live),
+            items = SnapshotLogic.Diff(content, live, config.Snapshots.IgnoreDataKeys),
             skills = SnapshotLogic.DiffSkills(content, live),
             live = Enrich(live),
         };
@@ -137,7 +139,7 @@ public sealed class AdminService
         return report;
     }
 
-    /// <summary>Adds parsed Epic Loot data to each item for the panel.</summary>
+    /// <summary>Adds what optional adapters know about an item (Epic Loot rarity and effects) for the panel.</summary>
     public static JsonObject Enrich(JsonObject snapshot)
     {
         foreach (var item in SnapshotLogic.Items(snapshot).OfType<JsonObject>())

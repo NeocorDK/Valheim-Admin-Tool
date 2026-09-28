@@ -695,43 +695,65 @@ views.characters = {
     };
 
     const itemsOf = () => snap?.content?.items || [];
-    const missingOf = idx => diff?.items.find(d => d.index === idx)?.missing;
+    const diffOf = idx => diff?.items.find(d => d.index === idx);
+    const missingOf = idx => diffOf(idx)?.missing;
+    /** Localized skill name from the game; the panel dictionary or the raw name when the game had none. */
+    const skillName = s => s.displayName && !/^[[$]/.test(s.displayName) ? s.displayName
+      : t('skill.' + s.name) === 'skill.' + s.name ? s.name : t('skill.' + s.name);
 
     const renderDetail = () => {
       if (!snap) return;
       const c = snap.content, row = snap.row;
       const w = c.inventory?.w || 8, hgt = c.inventory?.h || 4;
       const items = itemsOf();
-      const byPos = new Map();
-      const overflow = [];
+      // Items of inventories that mods add to the player (see ExtraInventories) get their own grids.
+      const main = [], byContainer = new Map();
       items.forEach((it, idx) => {
-        const key = it.y * w + it.x;
-        if (it.x < w && it.y < hgt && !byPos.has(key)) byPos.set(key, idx); else overflow.push(idx);
+        if (!it.container) { main.push(idx); return; }
+        if (!byContainer.has(it.container)) byContainer.set(it.container, []);
+        byContainer.get(it.container).push(idx);
       });
 
       const slot = idx => {
         if (idx == null) return h('div', { class: 'slot empty' });
         const it = items[idx];
-        const miss = missingOf(idx);
+        const d = diffOf(idx), miss = d?.missing;
         const rarity = it.magic?.rarityName;
-        const cls = ['slot', rarity ? 'r-' + rarity : '', miss ? 'missing' : '', picked.has(idx) ? 'picked' : '', focus === idx ? 'focus' : ''].join(' ');
+        const cls = ['slot', rarity ? 'r-' + rarity : '', miss ? 'missing' : '', d?.similar ? 'similar' : '', picked.has(idx) ? 'picked' : '', focus === idx ? 'focus' : ''].join(' ');
         const cb = h('input', { type: 'checkbox', class: 'pick', checked: picked.has(idx), title: t('ch.select'), onclick: e => {
           e.stopPropagation();
           e.target.checked ? picked.set(idx, miss ?? null) : picked.delete(idx);
           renderDetail();
         } });
-        return h('div', { class: cls, title: it.label, onclick: () => { focus = idx; renderDetail(); } },
+        return h('div', { class: cls, title: it.label + (d?.similar ? '\n' + t('ch.similar') : ''), onclick: () => { focus = idx; renderDetail(); } },
           it.quality > 1 ? h('span', { class: 'q', text: '★' + it.quality }) : null,
+          it.cheated ? h('span', { class: 'cheat', text: 'C', title: t('ch.cheated') }) : null,
           it.equipped ? h('span', { class: 'eq', text: 'E' }) : null,
-          h('span', { class: rarity ? 't-' + rarity : '', text: shortLabel(it.magic?.displayName || it.label || it.prefab) }),
+          // Icons are rendered by a player's game; until one is stored the name stands in.
+          h('img', { class: 'ico', alt: '', loading: 'lazy', src: `/api/icons/${encodeURIComponent(it.prefab)}/${it.variant || 0}`,
+            onload: e => e.target.parentElement?.classList.add('has-ico'), onerror: e => e.target.remove() }),
+          h('span', { class: 'name ' + (rarity ? 't-' + rarity : ''), text: shortLabel(it.magic?.displayName || it.label || it.prefab) }),
           it.stack > 1 ? h('span', { class: 'stack', text: it.stack }) : null,
           miss ? h('span', { class: 'miss', text: '−' + miss }) : null,
           cb);
       };
 
-      const grid = h('div', { class: 'inv', style: `--w:${w}` });
-      for (let y = 0; y < hgt; y++) for (let x = 0; x < w; x++) grid.append(slot(byPos.get(y * w + x)));
-      const extra = overflow.length ? h('div', { class: 'inv', style: `--w:${w};margin-top:8px` }, overflow.map(slot)) : null;
+      const gridFor = (indices, gw, gh) => {
+        const byPos = new Map(), overflow = [];
+        indices.forEach(idx => {
+          const it = items[idx], key = it.y * gw + it.x;
+          if (it.x < gw && it.y < gh && !byPos.has(key)) byPos.set(key, idx); else overflow.push(idx);
+        });
+        const g = h('div', { class: 'inv', style: `--w:${gw}` });
+        for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) g.append(slot(byPos.get(y * gw + x)));
+        return [g, overflow.length ? h('div', { class: 'inv', style: `--w:${gw};margin-top:8px` }, overflow.map(slot)) : null];
+      };
+      const [grid, extra] = gridFor(main, w, hgt);
+      const containerGrids = [...byContainer].map(([key, idxs]) => {
+        const meta = (c.containers || []).find(x => x.key === key) || {};
+        const cw = meta.w || w, chh = meta.h || Math.max(1, Math.ceil(idxs.length / cw));
+        return [h('h4', { class: 'muted small', style: 'margin:12px 0 6px', text: t('ch.container', key.split('.').slice(-2).join('.')), title: key }), ...gridFor(idxs, cw, chh)];
+      });
 
       const fi = focus != null ? items[focus] : null;
       const tip = h('div', { class: 'tooltip' });
@@ -740,6 +762,10 @@ views.characters = {
         tip.append(richText(fi.tooltip || ''));
         tip.append('\n\n', h('span', { class: 'muted', text: `${fi.prefab} · ${t('f.quality')} ${fi.quality} · ${t('ch.durability')} ${Math.round(fi.durability)}/${Math.round(fi.maxDurability)}` +
           (fi.crafterName ? ` · ${t('ch.crafter')} ${fi.crafterName}` : '') }));
+        if (fi.container) tip.append('\n', h('span', { class: 'muted', text: t('ch.container', fi.container) }));
+        if (fi.cheated) tip.append('\n', h('span', { class: 'error', text: t('ch.cheated') }));
+        const keys = Object.keys(fi.data || {});
+        if (keys.length) tip.append('\n', h('span', { class: 'muted', text: t('ch.dataKeys') + ': ' + keys.join(', ') }));
         if (fi.magic) {
           tip.append('\n', h('span', { class: 't-' + fi.magic.rarityName, text: t('rarity.' + fi.magic.rarityName) + (fi.magic.setId ? ' · set ' + fi.magic.setId : '') }));
           fi.magic.effects.forEach(e => tip.append('\n', h('span', { class: 'muted', text: `  ${e.type} ${Math.round(e.value * 100) / 100}` })));
@@ -750,7 +776,7 @@ views.characters = {
       const skills = (c.skills || []).slice().sort((a, b) => b.level - a.level);
       const skillsTable = h('table', {}, h('tbody', {}, skills.map(s => {
         const d = liveSkills.get(s.type);
-        return h('tr', {}, h('td', { text: t('skill.' + s.name) === 'skill.' + s.name ? s.name : t('skill.' + s.name) }),
+        return h('tr', {}, h('td', { text: skillName(s) }),
           h('td', { class: 'num', text: s.level.toFixed(1) }),
           h('td', { class: 'num error', text: d ? `${t('ch.now')} ${d.currentLevel.toFixed(1)}` : '' }));
       })));
@@ -768,7 +794,8 @@ views.characters = {
         if (!await confirmDialog(t('ch.restore'), text + (skillMode !== 'none' ? '\n' + t('ch.confirmSkills.' + skillMode) : '') + '\n\n' + t('ch.safety'), t('ch.restore'), mode === 'replace')) return;
         try {
           const r = await api(`/snapshots/${snapId}/restore`, { method: 'POST', body: { mode, items: sel, skillMode } });
-          toast(t('ch.restored', r.added, r.dropped, r.skills) + (r.failed?.length ? '\n' + t('ch.failed', r.failed.length) : ''), 'ok');
+          const failed = (r.failed || []).map(f => `${f.prefab || f.skill}: ${f.reason}`);
+          toast(t('ch.restored', r.added, r.dropped, r.skills) + (failed.length ? '\n' + t('ch.failed', failed.length) + '\n' + failed.slice(0, 6).join('\n') : ''), failed.length ? 'err' : 'ok');
           selectChar(charId);
         } catch (e) { fail(e); }
       };
@@ -785,7 +812,7 @@ views.characters = {
           h('span', { class: 'spacer' }), h('button', { class: 'btn', text: t('ch.compare'), onclick: compare, title: t('ch.compareHint') })),
         h('div', { style: 'height:12px' }),
         h('div', { class: 'grid grid-2' },
-          h('div', {}, h('h3', { text: t('ch.inventory') }), grid, extra,
+          h('div', {}, h('h3', { text: t('ch.inventory') }), grid, extra, containerGrids,
             h('div', { class: 'row small', style: 'margin-top:8px' },
               h('button', { class: 'btn small', text: t('ch.pickAll'), onclick: pickAll }),
               h('button', { class: 'btn small', text: t('ch.pickMissing'), disabled: !diff, onclick: pickMissing }),
@@ -918,7 +945,7 @@ views.maintenance = {
           },
           watchdog: { enabled: f.wdEnabled.checked, hangSeconds: num('hang'), maxRestartsPerHour: num('maxRestarts') },
           restarts: { enabled: f.rsEnabled.checked, times: list('times'), warnMinutes: list('warn').map(Number) },
-          snapshots: { keepAllDays: num('keepAll'), keepDailyDays: num('keepDaily') },
+          snapshots: { keepAllDays: num('keepAll'), keepDailyDays: num('keepDaily'), ignoreDataKeys: list('ignoreKeys') },
         };
         try {
           await api('/settings', { method: 'PUT', body });
@@ -947,7 +974,8 @@ views.maintenance = {
           field('warn', t('mt.warn'), s.restarts.warnMinutes.join(', '), 'text', '15, 5, 1')),
         h('h3', { style: 'margin-top:16px', text: t('mt.snapshots') }),
         h('div', { class: 'form' }, field('keepAll', t('mt.keepAll'), s.snapshots.keepAllDays, 'number'),
-          field('keepDaily', t('mt.keepDaily'), s.snapshots.keepDailyDays, 'number')),
+          field('keepDaily', t('mt.keepDaily'), s.snapshots.keepDailyDays, 'number'),
+          field('ignoreKeys', t('mt.ignoreKeys'), (s.snapshots.ignoreDataKeys || []).join(', '), 'text', t('mt.ignoreKeysNote'))),
         h('h3', { style: 'margin-top:16px', text: t('mt.other') }),
         h('div', { class: 'form' }, field('steamCmd', t('mt.steamcmd'), s.steamCmdPath, 'text', 'C:\\steamcmd\\steamcmd.exe'),
           h('label', {}, t('mt.language'), langSel)),

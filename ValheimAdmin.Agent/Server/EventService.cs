@@ -14,13 +14,15 @@ public sealed class EventService
 {
     private readonly Db db;
     private readonly SnapshotStore snapshots;
+    private readonly IconStore icons;
     private readonly LiveHub hub;
     private readonly ILogger<EventService> log;
 
-    public EventService(Db db, SnapshotStore snapshots, LiveHub hub, PluginBridge bridge, ILogger<EventService> log)
+    public EventService(Db db, SnapshotStore snapshots, IconStore icons, LiveHub hub, PluginBridge bridge, ILogger<EventService> log)
     {
         this.db = db;
         this.snapshots = snapshots;
+        this.icons = icons;
         this.hub = hub;
         this.log = log;
         bridge.EventReceived += OnPluginEvent;
@@ -112,6 +114,7 @@ public sealed class EventService
         string trigger = Str(d, "trigger") ?? "save";
         if (trigger == "live" || d["snapshot"] is not JsonObject snap) return;
         long id = snapshots.Add(snap, trigger, Str(d, "host"), ts);
+        icons.EnsureFor(snap);
         hub.Broadcast("snapshot", new { id, player = Str(d, "player"), trigger });
     }
 

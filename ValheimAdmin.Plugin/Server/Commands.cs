@@ -161,6 +161,10 @@ namespace ValheimAdmin
                     Snapshot(id, args);
                     return;
 
+                case "icons":
+                    RenderIcons(id, args);
+                    return;
+
                 case "restore":
                     if (!args.ContainsKey("payload")) throw new ArgumentException("payload is required");
                     ForwardToClient(id, args, Rpc.Restore, 30f, Rpc.Pack(Json.Serialize(args["payload"])));
@@ -359,6 +363,33 @@ namespace ValheimAdmin
             }
             else
                 ServerRole.SendToClient(peer.m_uid, Rpc.Command, 20f, done, line);
+        }
+
+        /// <summary>Item icons rendered by a player's game: the named player, or any online player with a 0.3+ client role.</summary>
+        private static void RenderIcons(long id, Dictionary<string, object> args)
+        {
+            ZNetPeer peer = null;
+            string player = args.Str("player");
+            if (!string.IsNullOrEmpty(player))
+                peer = ServerRole.FindPeer(player);
+            else
+                foreach (ZNetPeer p in ZNet.instance.GetPeers())
+                    if (p.IsReady() && ServerRole.Modded.TryGetValue(p.m_uid, out var m) && ServerRole.AtLeast(m, 0, 3))
+                    {
+                        peer = p;
+                        break;
+                    }
+            if (peer == null || !ServerRole.Modded.TryGetValue(peer.m_uid, out var mod) || !ServerRole.AtLeast(mod, 0, 3))
+            {
+                Fail(id, "No online player with the Valheim Admin mod 0.3+ to render icons");
+                return;
+            }
+            string request = Json.Serialize(new Dictionary<string, object> { { "items", args.List("items") ?? new List<object>() } });
+            ServerRole.SendToClient(peer.m_uid, Rpc.Icons, 30f, (ok, json) =>
+            {
+                if (ok) Ok(id, new Json.Raw(json));
+                else Fail(id, json);
+            }, Rpc.Pack(request));
         }
 
         private static void Give(long id, Dictionary<string, object> args)
