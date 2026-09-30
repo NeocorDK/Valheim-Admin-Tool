@@ -6,21 +6,22 @@ using UnityEngine;
 
 namespace ValheimAdmin
 {
-    /// <summary>Things drawn on the map: players, portals, location icons, tombstones and the admin's pins.</summary>
+    /// <summary>
+    /// Things drawn on the map that change during play: players, portals, tombstones, mob spawners,
+    /// pins from the game's map and the admin's own pins. World locations are in <see cref="MapLocations"/>.
+    /// </summary>
     public sealed class MapMarkers
     {
-        private const float TombstoneRescan = 30f;
-
         private readonly string pinsFile;
         private readonly List<Dictionary<string, object>> pins = new List<Dictionary<string, object>>();
-        private List<ZDO> tombstonesFound = new List<ZDO>();
-        private List<ZDO> tombstonesScanning;
-        private int scanIndex;
-        private float scanTimer = TombstoneRescan;
+        private readonly ZdoScanner scanner;
+        private readonly GamePins gamePins;
 
-        public MapMarkers(string pinsFile)
+        public MapMarkers(string pinsFile, ZdoScanner scanner, GamePins gamePins)
         {
             this.pinsFile = pinsFile;
+            this.scanner = scanner;
+            this.gamePins = gamePins;
             LoadPins();
         }
 
@@ -31,25 +32,12 @@ namespace ValheimAdmin
             return zdo != null ? zdo.GetPosition() : peer.m_refPos;
         }
 
-        /// <summary>Spreads the tombstone scan over frames; the game's iterator walks a slice of sectors per call.</summary>
-        public void Update(float dt)
-        {
-            if (tombstonesScanning == null)
-            {
-                scanTimer += dt;
-                if (scanTimer < TombstoneRescan) return;
-                scanTimer = 0;
-                tombstonesScanning = new List<ZDO>();
-                scanIndex = 0;
-            }
-            if (ZDOMan.instance.GetAllZDOsWithPrefabIterative("Player_tombstone", tombstonesScanning, ref scanIndex))
-            {
-                tombstonesFound = tombstonesScanning;
-                tombstonesScanning = null;
-            }
-        }
-
-        public Dictionary<string, object> Build(bool admin, FogTracker fog)
+        /// <summary>
+        /// Markers for the admin or the public. Pins from the game's map change rarely and can be
+        /// many, so the admin gets them only when asking (withPins); the public gets table pins
+        /// whenever they are public.
+        /// </summary>
+        public Dictionary<string, object> Build(bool admin, FogTracker fog, bool withPins)
         {
             var result = new Dictionary<string, object>();
             string playersMode = admin ? "all" : BepInExPlugin.MapPublicPlayers.Value;
@@ -84,16 +72,20 @@ namespace ValheimAdmin
             if (admin || BepInExPlugin.MapPublicPortals.Value)
                 result["portals"] = Portals().Where(p => visible(p.Key)).Select(p => Point(p.Key, "tag", p.Value)).ToList();
 
-            if (admin || BepInExPlugin.MapPublicLocations.Value)
-            {
-                var icons = new Dictionary<Vector3, string>();
-                ZoneSystem.instance.GetLocationIcons(icons);
-                result["locations"] = icons.Where(kv => visible(kv.Key)).Select(kv => Point(kv.Key, "name", kv.Value)).ToList();
-            }
-
             if (admin)
-                result["tombstones"] = tombstonesFound.Where(z => z.IsValid())
+                result["tombstones"] = scanner.Tombstones.Where(z => scanner.StillIs(z, ZdoScanner.Kind.Tombstone))
                     .Select(z => Point(z.GetPosition(), "owner", z.GetString(ZDOVars.s_ownerName, ""))).ToList();
+
+            if (admin || BepInExPlugin.MapPublicSpawners.Value)
+                result["spawners"] = scanner.Spawners.Where(z => scanner.StillIs(z, ZdoScanner.Kind.Spawner))
+                    .Select(z => new KeyValuePair<Vector3, string>(z.GetPosition(), scanner.PrefabName(z)))
+                    .Where(p => visible(p.Key)).Select(p => Point(p.Key, "prefab", p.Value)).ToList();
+
+            if (admin ? withPins : BepInExPlugin.MapPublicGamePins.Value)
+                result["gamePins"] = gamePins.TablePins(visible);
+
+            if (admin && withPins)
+                result["playerPins"] = gamePins.PlayerPins();
 
             result["pins"] = pins.Where(p => admin || p.Bool("public")).Select(p => (object)p).ToList();
             return result;

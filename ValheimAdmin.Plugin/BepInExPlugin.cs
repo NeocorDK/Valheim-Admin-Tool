@@ -28,7 +28,7 @@ namespace ValheimAdmin
     {
         public const string pluginGuid = "neocor.ValheimAdmin";
         public const string pluginName = "Valheim Admin";
-        public const string pluginVersion = "0.3.0";
+        public const string pluginVersion = "0.4.0";
 
         private static ManualLogSource logger;
 
@@ -38,6 +38,7 @@ namespace ValheimAdmin
         public static ConfigEntry<string> AgentSecretFile;
         public static ConfigEntry<bool> AllowServerCommands;
         public static ConfigEntry<bool> AllowRestore;
+        public static ConfigEntry<bool> SharePins;
         public static ConfigEntry<bool> IsDebug;
 
         public static ConfigEntry<bool> WebEnabled;
@@ -59,6 +60,8 @@ namespace ValheimAdmin
         public static ConfigEntry<string> MapPublicPlayers;
         public static ConfigEntry<bool> MapPublicPortals;
         public static ConfigEntry<bool> MapPublicLocations;
+        public static ConfigEntry<bool> MapPublicSpawners;
+        public static ConfigEntry<bool> MapPublicGamePins;
 
         public static void Log(string str)
         {
@@ -92,6 +95,8 @@ namespace ValheimAdmin
                 "Let the server admin run console commands (god, fly, spawn, ...) on this character through the admin panel.");
             AllowRestore = Config.Bind("Client", "AllowRestore", true,
                 "Let the server admin restore items and skills of this character from a snapshot.");
+            SharePins = Config.Bind("Client", "SharePins", true,
+                "Show the pins of your in-game map to the server admin on the admin panel's map (never on the public map).");
             IsDebug = Config.Bind("General", "Debug", false, "Verbose logging.");
 
             WebEnabled = Config.Bind("Web", "Enabled", true,
@@ -123,7 +128,12 @@ namespace ValheimAdmin
                 new ConfigDescription("Players on the public map: respect = only those with \"Visible on map\" on in the game, all, none.",
                     new AcceptableValueList<string>("respect", "all", "none")));
             MapPublicPortals = Config.Bind("Map", "PublicPortals", false, "Show portals (with their tags) on the public map, in explored areas.");
-            MapPublicLocations = Config.Bind("Map", "PublicLocations", false, "Show location icons (bosses, traders, start) on the public map, in explored areas.");
+            MapPublicLocations = Config.Bind("Map", "PublicLocations", false,
+                "Show the world's locations (boss altars, dungeons, traders, runestones, camps, ...) on the public map, in explored areas.");
+            MapPublicSpawners = Config.Bind("Map", "PublicSpawners", false,
+                "Show mob spawners (greydwarf nests, bone piles, ...) on the public map, in explored areas.");
+            MapPublicGamePins = Config.Bind("Map", "PublicGamePins", false,
+                "Show the pins players wrote to cartography tables on the public map, in explored areas. Personal pins are never public.");
 
             new Harmony(pluginGuid).PatchAll(typeof(BepInExPlugin).Assembly);
             AgentLink.Start();

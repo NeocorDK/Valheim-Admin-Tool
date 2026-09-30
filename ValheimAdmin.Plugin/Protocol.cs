@@ -33,6 +33,8 @@ namespace ValheimAdmin
         public const string Chat = "VA_Chat";
         /// <summary>server -> client: long reqId, ZPackage payload (deflated JSON {items: [{prefab, variant}]}); reply {"prefab|variant": png}</summary>
         public const string Icons = "VA_Icons";
+        /// <summary>server -> client: long reqId; reply {pins: [{name, type, x, z, checked}]} or {disabled: true} (0.4+)</summary>
+        public const string Pins = "VA_Pins";
 
         public static ZPackage Pack(string json)
         {

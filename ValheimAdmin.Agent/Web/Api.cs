@@ -100,6 +100,9 @@ public static partial class Api
         app.MapGet("/api/public/markers", async (MapProxy map) => Results.Ok(await map.MarkersAsync(admin: false) ?? new JsonObject()))
             .RequireRateLimiting("public");
 
+        app.MapGet("/api/public/locations", async (MapProxy map) => Results.Ok(await map.LocationsAsync(admin: false) ?? new JsonObject()))
+            .RequireRateLimiting("public");
+
         // ---------- auth ----------
         app.MapPost("/api/login", async (LoginBody body, HttpContext ctx, AgentConfig config, LoginGuard guard, Db db) =>
         {
@@ -201,7 +204,9 @@ public static partial class Api
 
         api.MapGet("/map/fog.png", async (MapProxy map, HttpContext ctx) => Png(await map.FileAsync("fog"), ctx));
 
-        api.MapGet("/map/markers", (MapProxy map) => Run(async () => await map.MarkersAsync(admin: true)));
+        api.MapGet("/map/markers", (MapProxy map, int? pins) => Run(async () => await map.MarkersAsync(admin: true, pins == 1)));
+
+        api.MapGet("/map/locations", (MapProxy map) => Run(async () => await map.LocationsAsync(admin: true) ?? new JsonObject()));
 
         api.MapGet("/map/info", (MapProxy map) => Run(async () => await map.InfoAsync()));
 

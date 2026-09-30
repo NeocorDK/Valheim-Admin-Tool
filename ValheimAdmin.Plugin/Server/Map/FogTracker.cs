@@ -59,6 +59,35 @@ namespace ValheimAdmin
             return x >= 0 && y >= 0 && x < size && y < size && explored[y * size + x];
         }
 
+        /// <summary>
+        /// Another explored grid (the game's minimap one: row = z, column = x, centred on the origin)
+        /// mapped onto this one. Touches only immutable fields, so it may run off the main thread.
+        /// </summary>
+        public BitArray Resample(BitArray other, int otherSize, float otherPixelSize)
+        {
+            var result = new BitArray(size * size);
+            for (int y = 0; y < size; y++)
+            {
+                int oy = Mathf.RoundToInt((y - size / 2) * pixelSize / otherPixelSize + otherSize / 2);
+                if (oy < 0 || oy >= otherSize) continue;
+                for (int x = 0; x < size; x++)
+                {
+                    int ox = Mathf.RoundToInt((x - size / 2) * pixelSize / otherPixelSize + otherSize / 2);
+                    if (ox >= 0 && ox < otherSize && other[oy * otherSize + ox]) result[y * size + x] = true;
+                }
+            }
+            return result;
+        }
+
+        /// <summary>Adds areas explored elsewhere (cartography tables). Main thread only.</summary>
+        public void MergeExplored(BitArray bits)
+        {
+            if (bits.Length != explored.Length) return;
+            explored.Or(bits);
+            unsaved = true;
+            version++;
+        }
+
         private void Explore(Vector3 p)
         {
             int r = Mathf.CeilToInt(Radius / pixelSize);

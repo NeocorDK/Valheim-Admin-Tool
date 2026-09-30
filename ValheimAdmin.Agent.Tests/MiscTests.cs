@@ -233,3 +233,78 @@ public class SchedulerTests
         Assert.Null(s.NextScheduled(Local(28, 7, 0)));
     }
 }
+
+public class SharedMapDataTests
+{
+    /// <summary>Bytes laid out like Minimap.GetSharedMapData writes them.</summary>
+    private static byte[] Table(int version, int cells, bool[] explored, params (long owner, string name, float x, float z, int type, bool done, string author)[] pins)
+    {
+        var ms = new MemoryStream();
+        using (var w = new BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true))
+        {
+            w.Write(version);
+            w.Write(cells);
+            for (int i = 0; i < cells; i++) w.Write(i < explored.Length && explored[i]);
+            if (version >= 2)
+            {
+                w.Write(pins.Length);
+                foreach (var p in pins)
+                {
+                    w.Write(p.owner);
+                    w.Write(p.name);
+                    w.Write(p.x);
+                    w.Write(31f);
+                    w.Write(p.z);
+                    w.Write(p.type);
+                    w.Write(p.done);
+                    if (version >= 3) w.Write(p.author);
+                }
+            }
+        }
+        return ms.ToArray();
+    }
+
+    [Fact]
+    public void ReadsVersion3PinsAndExploredGrid()
+    {
+        var data = Table(3, 16, [true, false, false, true], (42L, "Крипта", -120.5f, 800f, 6, true, "Steam_1"), (0L, "", 1f, 2f, 0, false, ""));
+        var map = ValheimAdmin.Shared.SharedMapData.Parse(data);
+        Assert.Equal(3, map.Version);
+        Assert.Equal(4, map.Size);
+        Assert.True(map.Explored![0]);
+        Assert.False(map.Explored[1]);
+        Assert.True(map.Explored[3]);
+        Assert.Equal(2, map.Pins.Count);
+        Assert.Equal(42L, map.Pins[0].OwnerId);
+        Assert.Equal("Крипта", map.Pins[0].Name);
+        Assert.Equal(-120.5f, map.Pins[0].X);
+        Assert.Equal(800f, map.Pins[0].Z);
+        Assert.Equal(6, map.Pins[0].Type);
+        Assert.True(map.Pins[0].Checked);
+        Assert.Equal("Steam_1", map.Pins[0].Author);
+    }
+
+    [Fact]
+    public void ReadsVersion2WithoutAuthor()
+    {
+        var map = ValheimAdmin.Shared.SharedMapData.Parse(Table(2, 4, [], (7L, "home", 5f, 6f, 1, false, "")));
+        Assert.Single(map.Pins);
+        Assert.Null(map.Pins[0].Author);
+        Assert.Equal("home", map.Pins[0].Name);
+    }
+
+    [Fact]
+    public void Version1HasNoPinsAndOddGridHasNoExplored()
+    {
+        var map = ValheimAdmin.Shared.SharedMapData.Parse(Table(1, 5, [true]));
+        Assert.Empty(map.Pins);
+        Assert.Null(map.Explored);
+    }
+
+    [Fact]
+    public void TruncatedDataThrows()
+    {
+        var data = Table(3, 4, [], (1L, "x", 0f, 0f, 0, false, "a"));
+        Assert.ThrowsAny<Exception>(() => ValheimAdmin.Shared.SharedMapData.Parse(data[..^3]));
+    }
+}

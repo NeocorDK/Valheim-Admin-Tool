@@ -291,10 +291,26 @@ main { min-height: 100vh; }
 .map-layers {
   position: absolute; right: 10px; top: 10px; z-index: 500; display: flex; flex-direction: column; gap: 6px;
   background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--border);
-  border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); font-size: 13px; max-width: 220px;
+  border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); font-size: 13px; width: 240px;
+  max-height: calc(100% - 20px); overflow: auto;
 }
+.map-layers.collapsed { width: auto; }
+.map-layers.collapsed .map-layers-body { display: none; }
+.map-layers.collapsed .map-layers-title { display: none; }
+.map-layers-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.map-layers-toggle { background: none; border: 0; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; }
+.map-layers-body { display: flex; flex-direction: column; gap: 6px; }
+.map-layers-list { display: flex; flex-direction: column; gap: 4px; }
 .map-layers-title { font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.map-layers-section { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 6px; }
+.map-layers .check { display: flex; align-items: center; gap: 6px; }
 .map-layers .note { margin: 0; }
+.map-search-row { display: flex; align-items: center; gap: 6px; }
+.map-search { flex: 1; min-width: 0; padding: 4px 8px; font-size: 13px; }
+.map-pin-player { font-size: 12px; margin-left: 22px; }
+.swatch { display: inline-grid; place-items: center; width: 14px; height: 14px; font-size: 12px; line-height: 1; flex: none; text-shadow: 0 0 2px #000; }
+.swatch.dot { border-radius: 50%; border: 1px solid #111; width: 9px; height: 9px; margin: 0 2.5px; }
+.swatch.mk-player-dot { border-radius: 50%; background: #ffb000; border: 2px solid #fff; width: 10px; height: 10px; margin: 0 2px; box-sizing: border-box; }
 .mk { display: grid; place-items: center; font-size: 15px; line-height: 1; color: #fff; text-shadow: 0 0 3px #000, 0 0 2px #000; }
 .mk-portal { color: #c58bff; }
 .mk-boss { color: #ff6b5e; font-size: 17px; }
@@ -302,6 +318,20 @@ main { min-height: 100vh; }
 .mk-start { color: #9ee7ff; }
 .mk-tomb { color: #e8e8e8; cursor: pointer; }
 .mk-pin { color: #ffb347; cursor: pointer; }
+.mk-vegvisir { color: #7cf2c2; }
+.mk-dungeon { color: #b9a4ff; font-size: 13px; }
+.mk.unplaced { opacity: .5; }
+.mk.defeated { color: #9aa3ad; }
+.mk-gpin { font-size: 13px; color: #fff; }
+.mk-gpin.table { color: #ffe08a; }
+.mk-gpin.personal { color: #8fd3ff; }
+.mk-gpin.checked { opacity: .45; }
+path.mk-search { stroke: #fff; stroke-dasharray: 4 3; }
+.leaflet-tooltip.mk-label.gpin { display: none; font-weight: 500; color: #fff3cf; }
+.zoomed-in .leaflet-tooltip.mk-label.gpin { display: block; }
+.mk-popup { display: flex; flex-direction: column; gap: 2px; min-width: 140px; }
+.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--surface); color: var(--text); }
+.leaflet-popup-content { margin: 10px 14px; font: inherit; }
 path.mk-player { stroke: #fff; fill: #ffb000; fill-opacity: 1; }
 path.mk-player.private { stroke-dasharray: 3 2; fill: #9aa3ad; }
 .leaflet-tooltip.mk-label {
@@ -349,7 +379,7 @@ path.mk-player.private { stroke-dasharray: 3 2; fill: #9aa3ad; }
   .topbar { position: static; padding: 10px 16px; }
   .view { padding: 16px; }
   .map-wrap { min-height: calc(100vh - 110px); }
-  .map-layers { max-width: 170px; font-size: 12px; padding: 8px 10px; }
+  .map-layers { width: 200px; font-size: 12px; padding: 8px 10px; }
   .grid-2, .grid-3, .chars, .configs { grid-template-columns: minmax(0, 1fr); }
   .chars > :last-child { grid-column: auto; }
   .ev { grid-template-columns: 1fr; gap: 2px; }

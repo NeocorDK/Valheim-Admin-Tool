@@ -18,6 +18,8 @@ public sealed class MapProxy(PluginBridge bridge)
     private DateTimeOffset infoAt = DateTimeOffset.MinValue;
     private JsonNode? publicMarkers;
     private DateTimeOffset publicMarkersAt = DateTimeOffset.MinValue;
+    private readonly SemaphoreSlim locationsLock = new(1, 1);
+    private readonly Dictionary<bool, (string Key, JsonNode Data)> locations = [];
 
     public async Task<JsonObject> InfoAsync()
     {
@@ -71,7 +73,7 @@ public sealed class MapProxy(PluginBridge bridge)
     {
         var i = await InfoAsync();
         var result = new JsonObject();
-        foreach (string key in new[] { "enabled", "state", "progress", "world", "size", "pixelSize", "publicFog", "online" })
+        foreach (string key in new[] { "enabled", "state", "progress", "world", "size", "pixelSize", "publicFog", "online", "locationsVersion" })
             if (i[key] != null) result[key] = i[key]!.DeepClone();
         bool publicFog = i["publicFog"]?.GetValue<bool>() != false;
         result["hasMap"] = SnapshotString(i, publicFog ? "publicMapFile" : "mapFile") != null;
@@ -80,15 +82,39 @@ public sealed class MapProxy(PluginBridge bridge)
         return result;
     }
 
-    public async Task<JsonNode?> MarkersAsync(bool admin)
+    public async Task<JsonNode?> MarkersAsync(bool admin, bool pins = false)
     {
-        if (admin) return await bridge.RequestAsync("map_markers", new JsonObject { ["admin"] = true });
+        if (admin) return await bridge.RequestAsync("map_markers", new JsonObject { ["admin"] = true, ["pins"] = pins });
         if (DateTimeOffset.UtcNow - publicMarkersAt < PublicMarkersTtl) return publicMarkers;
         publicMarkers = bridge.Connected && bridge.WorldReady
             ? await bridge.TryRequestAsync("map_markers", new JsonObject { ["admin"] = false })
             : null;
         publicMarkersAt = DateTimeOffset.UtcNow;
         return publicMarkers;
+    }
+
+    /// <summary>
+    /// Every location of the world. Asked again only when the plugin's locations version (or, for the
+    /// public, the explored area) changes; the last answer is kept while the server is down.
+    /// </summary>
+    public async Task<JsonNode?> LocationsAsync(bool admin)
+    {
+        var i = await InfoAsync();
+        string key = $"{i["locationsVersion"]}|{(admin ? "" : i["fogVersion"]?.ToString())}";
+        await locationsLock.WaitAsync();
+        try
+        {
+            if (locations.TryGetValue(admin, out var cached) && (cached.Key == key || i["online"]?.GetValue<bool>() != true))
+                return cached.Data;
+            if (!bridge.Connected || !bridge.WorldReady) return null;
+            var data = await bridge.TryRequestAsync("map_locations", new JsonObject { ["admin"] = admin }, TimeSpan.FromSeconds(30));
+            if (data != null) locations[admin] = (key, data);
+            return data;
+        }
+        finally
+        {
+            locationsLock.Release();
+        }
     }
 
     public async Task<JsonNode?> CommandAsync(string cmd, JsonObject? args = null)

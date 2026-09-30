@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- **Every location of the world on the map**, like valheim.tools but for your actual world, modded locations included: boss altars (beaten bosses greyed out), dungeons, vegvisirs, traders, camps and nests, resources, runestones and the rest; faded until someone reaches them. Layers per category, search with jump to the nearest match, details on click.
+- **Mob spawners** (greydwarf nests, body and bone piles, modded ones) on the map.
+- **Pins from the game's map:** cartography table pins (their explored area is added to the public fog too) and, for the admin, personal pins of players with the mod, filterable by player. Players can opt out with `[Client] SharePins`.
+- New public map options `[Map] PublicSpawners` and `PublicGamePins` (off); `PublicLocations` now covers all locations.
+- The map's layer panel can be collapsed.
+
 ## 0.3.0
 
 - **Public world map** as the landing page, no login needed: drawn on the server from the world generator (world generation mods included), explored areas tracked on the server, players (respecting "Visible on map"), admin pins; portals and places optional. Unexplored areas never leave the server. Works with the `nomap` key; the admin sees everything, including tombstones.

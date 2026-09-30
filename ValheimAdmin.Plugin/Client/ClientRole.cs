@@ -20,6 +20,7 @@ namespace ValheimAdmin
             ZRoutedRpc.instance.Register<long, ZPackage>(Rpc.Restore, RPC_Restore);
             ZRoutedRpc.instance.Register<string>(Rpc.Chat, RPC_Chat);
             ZRoutedRpc.instance.Register<long, ZPackage>(Rpc.Icons, RPC_Icons);
+            ZRoutedRpc.instance.Register<long>(Rpc.Pins, RPC_Pins);
         }
 
         private static bool IsClient => ZNet.instance != null && !ZNet.instance.IsServer();
@@ -253,6 +254,39 @@ namespace ValheimAdmin
                 BepInExPlugin.Warn("Icon rendering failed: " + e);
                 Reply(requestId, false, "Icon rendering failed: " + e.Message);
             }
+        }
+
+        /// <summary>
+        /// The player's own pins on the game's map, for the admin's map. Pins that came from a
+        /// cartography table (another owner) are left out: the server reads those from the table.
+        /// </summary>
+        private static void RPC_Pins(long sender, long requestId)
+        {
+            if (!FromServer(sender)) return;
+            if (!BepInExPlugin.SharePins.Value)
+            {
+                Reply(requestId, true, new Dictionary<string, object> { { "disabled", true } });
+                return;
+            }
+            if (Minimap.instance == null)
+            {
+                Reply(requestId, false, "The map is not available");
+                return;
+            }
+            var pins = new List<object>();
+            foreach (Minimap.PinData pin in Minimap.instance.m_pins)
+            {
+                if (!pin.m_save || pin.m_ownerID != 0) continue;
+                pins.Add(new Dictionary<string, object>
+                {
+                    { "name", pin.m_name ?? "" },
+                    { "type", (int)pin.m_type },
+                    { "x", Math.Round(pin.m_pos.x, 1) },
+                    { "z", Math.Round(pin.m_pos.z, 1) },
+                    { "checked", pin.m_checked },
+                });
+            }
+            Reply(requestId, true, new Dictionary<string, object> { { "pins", pins } });
         }
 
         private static void RPC_Chat(long sender, string text)

@@ -1056,15 +1056,50 @@ views.maintenance = {
 };
 
 // ---- map (public landing page; admins see everything)
-const LOCATION_NAMES = {
-  StartTemple: 'Sacrificial stones', Eikthyrnir: 'Eikthyr', GDKing: 'The Elder', Bonemass: 'Bonemass', Dragonqueen: 'Moder',
-  GoblinKing: 'Yagluth', Mistlands_DvergrBossEntrance1: 'The Queen', FaderLocation: 'Fader', Vendor_BlackForest: 'Haldor',
-  Hildir_camp: 'Hildir', BogWitch_Camp: 'Bog Witch',
+
+/** Boss altar → the global key the game sets once that boss is beaten. */
+const BOSS_KEYS = {
+  Eikthyrnir: 'defeated_eikthyr', GDKing: 'defeated_gdking', Bonemass: 'defeated_bonemass', Dragonqueen: 'defeated_dragon',
+  GoblinKing: 'defeated_goblinking', Mistlands_DvergrBossEntrance1: 'defeated_queen', FaderLocation: 'defeated_fader',
 };
-const BOSS_LOCATIONS = ['Eikthyrnir', 'GDKing', 'Bonemass', 'Dragonqueen', 'GoblinKing', 'Mistlands_DvergrBossEntrance1', 'FaderLocation'];
-const locationName = n => LOCATION_NAMES[n] || n.replace(/_/g, ' ');
-const locationKind = n => BOSS_LOCATIONS.includes(n) ? 'boss' : /vendor|hildir|witch|trader/i.test(n) ? 'trader' : n === 'StartTemple' ? 'start' : 'loc';
-const MAP_GLYPHS = { portal: '◆', boss: '☠', trader: '¤', start: '✦', loc: '•', tomb: '✝', pin: '⚑' };
+/** Location categories by prefab name, first match wins; unknown and modded locations land in "other". */
+const LOCATION_CATEGORIES = [
+  ['start', /^StartTemple$/],
+  ['boss', new RegExp(`^(${Object.keys(BOSS_KEYS).join('|')})$`)],
+  ['vegvisir', /^Vegvisir/i],
+  ['trader', /^Vendor_|^Hildir_camp$|^BogWitch_Camp$/i],
+  ['dungeon', /Crypt|Cave|DvergrTownEntrance|^Hildir_plainsfortress|Dungeon|MorgenHole|PlaceofMystery|CharredFortress/i],
+  ['runestone', /Runestone/i],
+  ['camp', /Camp|Nest|SwampHut|InfestedTree|GuardTower|Barracks|Fortress/i],
+  ['resource', /TarPit|Excavation|Mistlands_Giant|ShipWreck|Meteorite/i],
+  ['other', /./],
+];
+const LOCATION_ORDER = ['boss', 'dungeon', 'vegvisir', 'trader', 'start', 'camp', 'resource', 'runestone', 'other'];
+/** Few and important: drawn as glyphs. The rest are many: dots on a canvas. */
+const MAP_GLYPHS = { start: '✦', boss: '☠', vegvisir: '✧', dungeon: '▼', trader: '¤', portal: '◆', tomb: '✝', pin: '⚑' };
+const DOT_COLORS = { runestone: '#7fd1ff', camp: '#ff8c5a', resource: '#c3e86b', other: '#cfcfcf', spawners: '#ff4d6d' };
+/** Minimap.PinType → glyph. */
+const PIN_GLYPHS = { 0: '♨', 1: '⌂', 2: '⚒', 3: '●', 4: '✝', 5: '☾', 6: '✦', 7: '!', 9: '☠', 14: '❖', 15: '❖', 16: '❖', 17: '✟' };
+const MAP_LAYERS = [
+  ['players', 'marks'], ['pins', 'marks'], ['gamePins', 'marks'], ['playerPins', 'marks'],
+  ...LOCATION_ORDER.map(c => ['loc.' + c, 'locations']),
+  ['spawners', 'objects'], ['portals', 'objects'], ['tombstones', 'objects'],
+];
+const DEFAULT_HIDDEN = ['loc.other', 'loc.runestone', 'spawners'];
+
+/** t() with a fallback for keys that are not in the dictionary. */
+const tr = (key, fallback) => { const s = t(key); return s === key ? fallback : s; };
+const prettyName = n => n.replace(/\d+$/, '').replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/\s+/g, ' ').trim();
+const locationCategory = n => LOCATION_CATEGORIES.find(([, re]) => re.test(n))[0];
+function locationName(n) {
+  const known = tr('loc.' + n.replace(/\d+$/, ''), null);
+  if (known) return known;
+  const m = /^(Vegvisir|Runestone)_?(.*)$/i.exec(n);
+  if (m) return t('map.cat.' + m[1].toLowerCase()) + (m[2] ? ': ' + prettyName(m[2]) : '');
+  return prettyName(n);
+}
+const spawnerName = p => tr('spawner.' + p, prettyName(p.replace(/^Spawner_|Spawner$/g, '')));
+const pinTypeName = type => tr('map.pinType' + type, t('map.gamePin'));
 
 /** Fetch for the public endpoints: never opens the login dialog. */
 async function publicGet(path) {
@@ -1086,13 +1121,36 @@ views.map = {
 
     const map = L.map(el, { crs: L.CRS.Simple, minZoom: -6, maxZoom: 3, zoomSnap: 0.25, zoomDelta: 0.5, attributionControl: false });
     const ll = (x, z) => L.latLng(z, x);
-    const groups = { players: L.layerGroup(), pins: L.layerGroup(), portals: L.layerGroup(), locations: L.layerGroup(), tombstones: L.layerGroup() };
-    let hiddenLayers;
-    try { hiddenLayers = new Set(JSON.parse(localStorage.getItem('va_map_hidden') || '[]')); } catch { hiddenLayers = new Set(); }
-    for (const [k, g] of Object.entries(groups)) if (!hiddenLayers.has(k)) g.addTo(map);
+    const dots = L.canvas({ padding: 0.5 });
+    const groups = Object.fromEntries(MAP_LAYERS.map(([k]) => [k, L.layerGroup()]));
 
-    let overlay = null, fogOverlay = null, bounds = null, fitted = false, info = null, markers = {};
-    const glyph = kind => L.divIcon({ className: 'mk mk-' + kind, html: MAP_GLYPHS[kind] || '•', iconSize: [20, 20], iconAnchor: [10, 10] });
+    let layerState = null;
+    try { layerState = JSON.parse(localStorage.getItem('va_map_layers') || 'null'); } catch { }
+    if (!layerState) {
+      layerState = {};
+      try { for (const k of JSON.parse(localStorage.getItem('va_map_hidden') || '[]')) layerState[k] = false; } catch { }
+    }
+    const isOn = k => layerState[k] ?? !DEFAULT_HIDDEN.includes(k);
+    const setOn = (k, on) => {
+      layerState[k] = on;
+      if (on) groups[k].addTo(map); else groups[k].remove();
+      try { localStorage.setItem('va_map_layers', JSON.stringify(layerState)); } catch { }
+    };
+    for (const [k, g] of Object.entries(groups)) if (isOn(k)) g.addTo(map);
+
+    let overlay = null, fogOverlay = null, bounds = null, fitted = false, info = null;
+    let markers = {}, locations = {}, locationsKey = null, pinPlayer = '', polls = 0;
+    const drawn = {}; // layer -> JSON last drawn, so unchanged layers are not rebuilt every poll
+    const counts = {};
+
+    const glyph = (kind, extra = '') => L.divIcon({ className: `mk mk-${kind}${extra}`, html: MAP_GLYPHS[kind] || '•', iconSize: [20, 20], iconAnchor: [10, 10] });
+    const pinIcon = (type, cls) => L.divIcon({ className: `mk mk-gpin ${cls}`, html: PIN_GLYPHS[type] ?? '•', iconSize: [18, 18], iconAnchor: [9, 9] });
+    const where = (x, z) => `x ${Math.round(x)} · z ${Math.round(z)}`;
+    const popup = (title, rows) => h('div', { class: 'mk-popup' }, h('b', { text: title }),
+      rows.filter(Boolean).map(r => h('div', { class: 'muted small', text: r })));
+    // In-game pin names are shown next to them once zoomed in, like on the game's map.
+    const zoomLabels = () => el.classList.toggle('zoomed-in', map.getZoom() >= -1);
+    map.on('zoomend', zoomLabels);
 
     const readInfo = async () => {
       if (admin) {
@@ -1124,6 +1182,7 @@ views.map = {
         try { saved = JSON.parse(localStorage.getItem('va_map_view') || 'null'); } catch { }
         if (saved) map.setView(saved.c, saved.z); else map.fitBounds(bounds.pad(-0.12));
         map.setMaxBounds(bounds.pad(0.15));
+        zoomLabels();
       }
     };
 
@@ -1133,36 +1192,110 @@ views.map = {
       statusEl.textContent = text;
       statusEl.hidden = !text;
       if (info?.hasMap) showImage(info);
+      refreshLocations();
+    };
+
+    // ---- world locations: loaded once, and again when zones get generated (or, publicly, explored)
+    const refreshLocations = async () => {
+      if (info?.locationsVersion == null) return;
+      const key = admin ? `${info.locationsVersion}` : `${info.locationsVersion}|${info.version}`;
+      if (key === locationsKey) return;
+      try {
+        drawLocations(admin ? await api('/map/locations') : await publicGet('/api/public/locations'));
+        locationsKey = key;
+      } catch { }
+    };
+
+    const drawLocations = data => {
+      locations = data || {};
+      const defeated = new Set(locations.defeated || []);
+      for (const c of LOCATION_ORDER) { groups['loc.' + c].clearLayers(); counts['loc.' + c] = 0; }
+      for (const [prefab, list] of Object.entries(locations.types || {})) {
+        const cat = locationCategory(prefab), name = locationName(prefab), group = groups['loc.' + cat];
+        const beaten = cat === 'boss' && defeated.has(BOSS_KEYS[prefab]);
+        counts['loc.' + cat] += list.length;
+        for (const [x, z, placed] of list) {
+          const m = MAP_GLYPHS[cat]
+            ? L.marker(ll(x, z), { icon: glyph(cat, (placed ? '' : ' unplaced') + (beaten ? ' defeated' : '')) })
+            : L.circleMarker(ll(x, z), { renderer: dots, radius: 4, color: '#111', weight: 1, fillColor: DOT_COLORS[cat], fillOpacity: placed ? 0.95 : 0.35 });
+          m.bindTooltip(name).bindPopup(() => popup(name, [
+            t('map.cat.' + cat) + (beaten ? ' · ' + t('map.defeated') : ''),
+            admin ? prefab : null, where(x, z), placed ? null : t('map.notGenerated'),
+          ])).addTo(group);
+        }
+      }
       renderLayers();
     };
 
+    // ---- things that move or change: polled
+    const changed = (k, data) => {
+      const json = JSON.stringify(data ?? null);
+      if (drawn[k] === json) return false;
+      drawn[k] = json;
+      groups[k].clearLayers();
+      counts[k] = (data || []).length;
+      return true;
+    };
+
     const drawMarkers = data => {
-      markers = data || {};
-      for (const g of Object.values(groups)) g.clearLayers();
-      for (const p of markers.players || []) {
-        L.circleMarker(ll(p.x, p.z), { radius: 6, className: 'mk-player' + (admin && p.public === false ? ' private' : ''), weight: 2 })
-          .bindTooltip(p.name + (admin && p.public === false ? ' · ' + t('map.privatePlayer') : ''), { permanent: true, direction: 'right', offset: [8, 0], className: 'mk-label' })
-          .addTo(groups.players);
-      }
-      for (const p of markers.portals || [])
-        L.marker(ll(p.x, p.z), { icon: glyph('portal') }).bindTooltip(p.tag || t('map.portal')).addTo(groups.portals);
-      for (const l of markers.locations || [])
-        L.marker(ll(l.x, l.z), { icon: glyph(locationKind(l.name)) }).bindTooltip(locationName(l.name)).addTo(groups.locations);
-      for (const s of markers.tombstones || [])
-        L.marker(ll(s.x, s.z), { icon: glyph('tomb') }).bindTooltip(t('map.tombstone', s.owner || '?'))
-          .on('click', () => { location.hash = '#characters'; }).addTo(groups.tombstones);
-      for (const p of markers.pins || []) {
-        const m = L.marker(ll(p.x, p.z), { icon: glyph('pin') });
-        if (p.label) m.bindTooltip(p.label, { permanent: true, direction: 'right', offset: [8, 0], className: 'mk-label pin' });
-        if (admin) m.on('click', () => removePin(p));
-        m.addTo(groups.pins);
-      }
+      markers = { ...(admin ? { gamePins: markers.gamePins, playerPins: markers.playerPins } : {}), ...(data || {}) };
+      if (changed('players', markers.players))
+        for (const p of markers.players || []) {
+          L.circleMarker(ll(p.x, p.z), { radius: 6, className: 'mk-player' + (admin && p.public === false ? ' private' : ''), weight: 2 })
+            .bindTooltip(p.name + (admin && p.public === false ? ' · ' + t('map.privatePlayer') : ''), { permanent: true, direction: 'right', offset: [8, 0], className: 'mk-label' })
+            .addTo(groups.players);
+        }
+      if (changed('portals', markers.portals))
+        for (const p of markers.portals || [])
+          L.marker(ll(p.x, p.z), { icon: glyph('portal') }).bindTooltip(p.tag || t('map.portal'))
+            .bindPopup(() => popup(p.tag || t('map.portal'), [t('map.portal'), where(p.x, p.z)])).addTo(groups.portals);
+      if (changed('tombstones', markers.tombstones))
+        for (const s of markers.tombstones || [])
+          L.marker(ll(s.x, s.z), { icon: glyph('tomb') }).bindTooltip(t('map.tombstone', s.owner || '?'))
+            .on('click', () => { location.hash = '#characters'; }).addTo(groups.tombstones);
+      if (changed('spawners', markers.spawners))
+        for (const s of markers.spawners || []) {
+          const name = spawnerName(s.prefab || '');
+          L.circleMarker(ll(s.x, s.z), { renderer: dots, radius: 3.5, color: '#111', weight: 1, fillColor: DOT_COLORS.spawners, fillOpacity: 0.95 })
+            .bindTooltip(name).bindPopup(() => popup(name, [t('map.spawner'), admin ? s.prefab : null, where(s.x, s.z)])).addTo(groups.spawners);
+        }
+      if (changed('pins', markers.pins))
+        for (const p of markers.pins || []) {
+          const m = L.marker(ll(p.x, p.z), { icon: glyph('pin') });
+          if (p.label) m.bindTooltip(p.label, { permanent: true, direction: 'right', offset: [8, 0], className: 'mk-label pin' });
+          if (admin) m.on('click', () => removePin(p));
+          m.addTo(groups.pins);
+        }
+      if (changed('gamePins', markers.gamePins))
+        for (const p of markers.gamePins || [])
+          gamePin(p, 'table', [t('map.tablePin'), p.owner ? t('map.pinOwner', p.owner) : null]).addTo(groups.gamePins);
+      drawPlayerPins();
       renderLayers();
+    };
+
+    const gamePin = (p, cls, rows) => {
+      const title = p.name || pinTypeName(p.type);
+      const m = L.marker(ll(p.x, p.z), { icon: pinIcon(p.type, cls + (p.checked ? ' checked' : '')) });
+      if (p.name) m.bindTooltip(p.name, { permanent: true, direction: 'right', offset: [7, 0], className: 'mk-label gpin' });
+      else m.bindTooltip(title);
+      return m.bindPopup(() => popup(title, [...rows, p.name ? pinTypeName(p.type) : null, where(p.x, p.z)]));
+    };
+
+    const drawPlayerPins = () => {
+      const owners = (markers.playerPins || []).filter(o => !pinPlayer || o.player === pinPlayer);
+      if (!changed('playerPins', owners)) return;
+      counts.playerPins = owners.reduce((n, o) => n + (o.pins || []).length, 0);
+      for (const o of owners) {
+        const updated = o.updated ? t('map.pinsUpdated', new Date(o.updated * 1000).toLocaleString(lang())) : null;
+        for (const p of o.pins || []) gamePin(p, 'personal', [t('map.playerPin', o.player), updated]).addTo(groups.playerPins);
+      }
     };
 
     const refreshMarkers = async () => {
       if (document.hidden) return;
-      try { drawMarkers(admin ? await api('/map/markers') : await publicGet('/api/public/markers')); } catch { }
+      // Pins from the game's map change rarely and can be many: the admin asks for them every 30 s.
+      const pins = admin && polls++ % 10 === 0;
+      try { drawMarkers(admin ? await api('/map/markers' + (pins ? '?pins=1' : '')) : await publicGet('/api/public/markers')); } catch { }
     };
 
     const setFog = on => {
@@ -1170,22 +1303,109 @@ views.map = {
       if (!on && fogOverlay) { fogOverlay.remove(); fogOverlay = null; }
     };
 
-    const renderLayers = () => {
-      const available = Object.keys(groups).filter(k => k === 'players' || k === 'pins' || markers[k] !== undefined);
-      fill(layersEl,
-        h('div', { class: 'map-layers-title', text: t('map.layers') }),
-        available.map(k => h('label', { class: 'check' },
-          h('input', { type: 'checkbox', checked: !hiddenLayers.has(k), onchange: e => {
-            if (e.target.checked) { hiddenLayers.delete(k); groups[k].addTo(map); } else { hiddenLayers.add(k); groups[k].remove(); }
-            try { localStorage.setItem('va_map_hidden', JSON.stringify([...hiddenLayers])); } catch { }
-          } }),
-          `${t('map.' + k)} (${(markers[k] || []).length})`)),
+    // ---- the panel: search, layers, admin tools. Built once; counts are updated in place.
+    const searchEl = h('input', { type: 'search', class: 'map-search', placeholder: t('map.search') });
+    const hitsEl = h('span', { class: 'muted small' });
+    const listEl = h('div', { class: 'map-layers-list' });
+    let collapsed = null;
+    try { collapsed = JSON.parse(localStorage.getItem('va_map_panel_collapsed') || 'null'); } catch { }
+    if (collapsed == null) collapsed = window.matchMedia('(max-width: 860px)').matches;
+    const toggleEl = h('button', { class: 'map-layers-toggle', type: 'button', title: t('map.layers'), onclick: () => {
+      collapsed = !collapsed;
+      layersEl.classList.toggle('collapsed', collapsed);
+      try { localStorage.setItem('va_map_panel_collapsed', JSON.stringify(collapsed)); } catch { }
+    } }, '☰');
+    layersEl.classList.toggle('collapsed', collapsed);
+    fill(layersEl,
+      h('div', { class: 'map-layers-head' }, h('span', { class: 'map-layers-title', text: t('map.layers') }), toggleEl),
+      h('div', { class: 'map-layers-body' },
+        h('div', { class: 'map-search-row' }, searchEl, hitsEl),
+        listEl,
         admin ? [
-          h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!fogOverlay, onchange: e => setFog(e.target.checked) }), t('map.explored')),
-          h('button', { class: 'btn small', text: t('map.regen'), onclick: regen }),
+          h('label', { class: 'check' }, h('input', { type: 'checkbox', onchange: e => setFog(e.target.checked) }), t('map.explored')),
+          h('button', { class: 'btn small', text: t('map.regen'), onclick: () => regen() }),
           h('p', { class: 'note', text: t('map.pinHint') }),
-        ] : null);
+        ] : null));
+
+    let layout = '';
+    const countEls = {};
+    const available = () => MAP_LAYERS.map(([k, section]) => [k, section]).filter(([k]) =>
+      k === 'players' || k === 'pins' || (k.startsWith('loc.') ? counts[k] > 0 : markers[k] !== undefined));
+    const swatch = k => {
+      const kind = k.startsWith('loc.') ? k.slice(4) : { portals: 'portal', tombstones: 'tomb', pins: 'pin' }[k];
+      if (DOT_COLORS[kind] || k === 'spawners') return h('span', { class: 'swatch dot', style: `background:${DOT_COLORS[kind || k]}` });
+      if (MAP_GLYPHS[kind]) return h('span', { class: `swatch mk-${kind}`, text: MAP_GLYPHS[kind] });
+      if (k === 'gamePins') return h('span', { class: 'swatch mk-gpin table', text: '⌂' });
+      if (k === 'playerPins') return h('span', { class: 'swatch mk-gpin personal', text: '⌂' });
+      return h('span', { class: 'swatch mk-player-dot' });
     };
+    const renderLayers = () => {
+      const list = available();
+      const signature = list.map(([k]) => k).join() + '|' + (markers.playerPins || []).map(o => o.player).join();
+      if (signature !== layout) {
+        layout = signature;
+        let section = null;
+        const rows = [];
+        for (const [k, s] of list) {
+          if (s !== section) { section = s; rows.push(h('div', { class: 'map-layers-section', text: t('map.sec.' + s) })); }
+          countEls[k] = h('span', { class: 'muted' });
+          rows.push(h('label', { class: 'check' },
+            h('input', { type: 'checkbox', checked: isOn(k), onchange: e => setOn(k, e.target.checked) }),
+            swatch(k), h('span', { text: k.startsWith('loc.') ? t('map.cat.' + k.slice(4)) : t('map.' + k) }), countEls[k]));
+          if (k === 'playerPins' && (markers.playerPins || []).length > 1)
+            rows.push(h('select', { class: 'map-pin-player', onchange: e => { pinPlayer = e.target.value; drawPlayerPins(); renderLayers(); } },
+              h('option', { value: '', text: t('map.allPlayers') }),
+              markers.playerPins.map(o => h('option', { value: o.player, text: o.player, selected: o.player === pinPlayer }))));
+        }
+        fill(listEl, rows);
+      }
+      for (const [k] of list) countEls[k].textContent = ` ${counts[k] ?? (markers[k] || []).length}`;
+    };
+
+    // ---- search over everything on the map; Enter jumps to the next match, nearest first
+    let hits = [], hitIndex = -1, hitQuery = '', hitMark = null;
+    const searchable = () => {
+      const items = [];
+      for (const [prefab, list] of Object.entries(locations.types || {})) {
+        const name = locationName(prefab);
+        for (const [x, z] of list) items.push({ name, extra: prefab, x, z });
+      }
+      for (const s of markers.spawners || []) items.push({ name: spawnerName(s.prefab || ''), extra: s.prefab, x: s.x, z: s.z });
+      for (const p of markers.portals || []) items.push({ name: p.tag || t('map.portal'), x: p.x, z: p.z });
+      for (const p of markers.players || []) items.push({ name: p.name, x: p.x, z: p.z });
+      for (const p of markers.pins || []) items.push({ name: p.label, x: p.x, z: p.z });
+      for (const p of markers.gamePins || []) items.push({ name: p.name, extra: p.owner, x: p.x, z: p.z });
+      for (const o of markers.playerPins || []) for (const p of o.pins || []) items.push({ name: p.name, extra: o.player, x: p.x, z: p.z });
+      for (const s of markers.tombstones || []) items.push({ name: t('map.tombstone', s.owner || '?'), x: s.x, z: s.z });
+      return items;
+    };
+    const clearMark = () => { if (hitMark) { hitMark.remove(); hitMark = null; } };
+    const search = jump => {
+      const q = searchEl.value.trim().toLowerCase();
+      if (!q) { hits = []; hitQuery = ''; hitsEl.textContent = ''; clearMark(); return; }
+      if (q !== hitQuery || !jump) {
+        const c = map.getCenter();
+        const d = i => (i.x - c.lng) ** 2 + (i.z - c.lat) ** 2;
+        hits = searchable().filter(i => (i.name || '').toLowerCase().includes(q) || (i.extra || '').toLowerCase().includes(q))
+          .sort((a, b) => d(a) - d(b));
+        hitQuery = q;
+        hitIndex = -1;
+      }
+      if (!hits.length) { hitsEl.textContent = t('map.noMatches'); clearMark(); return; }
+      if (!jump) { hitsEl.textContent = String(hits.length); return; }
+      hitIndex = (hitIndex + 1) % hits.length;
+      const hit = hits[hitIndex];
+      hitsEl.textContent = `${hitIndex + 1}/${hits.length}`;
+      clearMark();
+      hitMark = L.circleMarker(ll(hit.x, hit.z), { radius: 16, className: 'mk-search', weight: 3, fill: false, interactive: false })
+        .bindTooltip(hit.name || '', { permanent: true, direction: 'top', offset: [0, -14], className: 'mk-label' }).addTo(map);
+      map.setView(ll(hit.x, hit.z), Math.max(map.getZoom(), -1));
+    };
+    searchEl.addEventListener('input', () => search(false));
+    searchEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); search(true); }
+      if (e.key === 'Escape') { searchEl.value = ''; search(false); }
+    });
 
     const regen = async () => {
       if (!await confirmDialog(t('map.regen'), t('map.regenConfirm'), t('btn.yes'))) return;
@@ -1213,6 +1433,7 @@ views.map = {
     map.on('moveend', () => { try { localStorage.setItem('va_map_view', JSON.stringify({ c: map.getCenter(), z: map.getZoom() })); } catch { } });
     if (admin) map.on('contextmenu', e => addPin(e.latlng));
 
+    renderLayers();
     refreshInfo();
     refreshMarkers();
     const markerTimer = setInterval(refreshMarkers, 3000);

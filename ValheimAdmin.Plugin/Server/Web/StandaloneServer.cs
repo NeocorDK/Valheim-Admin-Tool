@@ -39,6 +39,8 @@ namespace ValheimAdmin.Web
         private static DateTime lastRetention = DateTime.MinValue;
         private static object publicMarkers;
         private static DateTime publicMarkersAt = DateTime.MinValue;
+        private static object publicLocations;
+        private static string publicLocationsKey;
 
         public static bool Running => running;
 
@@ -308,6 +310,7 @@ namespace ValheimAdmin.Web
             router.Map("GET", "/api/public/map.png", r => MapFile(PublicMapInfo().Bool("publicFog") ? "publicMapFile" : "mapFile",
                 PublicMapInfo().Bool("publicFog") ? "fogVersion" : "mapVersion"), admin: false);
             router.Map("GET", "/api/public/markers", r => PublicMarkers(), admin: false);
+            router.Map("GET", "/api/public/locations", r => PublicLocations(), admin: false);
 
             // ----- auth
             router.Map("POST", "/api/login", r =>
@@ -443,7 +446,8 @@ namespace ValheimAdmin.Web
             router.Map("GET", "/api/map/info", r => GameCalls.OnMain(MapService.Info));
             router.Map("GET", "/api/map/full.png", r => MapFile("mapFile", "mapVersion"));
             router.Map("GET", "/api/map/fog.png", r => MapFile("fogFile", "fogVersion"));
-            router.Map("GET", "/api/map/markers", r => Cmd("map_markers", Obj("admin", true)));
+            router.Map("GET", "/api/map/markers", r => Cmd("map_markers", Obj("admin", true, "pins", r.Q("pins") == "1")));
+            router.Map("GET", "/api/map/locations", r => Cmd("map_locations", Obj("admin", true)));
             router.Map("POST", "/api/map/regen", r => { store.Audit(r.Ip, "map-regen"); return Cmd("map_regen"); });
             router.Map("POST", "/api/map/pins", r =>
             {
@@ -481,7 +485,7 @@ namespace ValheimAdmin.Web
             var i = GameCalls.OnMain(MapService.Info);
             bool publicFog = i.Bool("publicFog", true);
             var result = new Dictionary<string, object>();
-            foreach (string key in new[] { "enabled", "state", "progress", "world", "size", "pixelSize", "publicFog" })
+            foreach (string key in new[] { "enabled", "state", "progress", "world", "size", "pixelSize", "publicFog", "locationsVersion" })
                 if (i.ContainsKey(key)) result[key] = i[key];
             result["online"] = true;
             result["hasMap"] = i.Str(publicFog ? "publicMapFile" : "mapFile") != null;
@@ -504,6 +508,17 @@ namespace ValheimAdmin.Web
             publicMarkers = Cmd("map_markers", Obj("admin", false));
             publicMarkersAt = DateTime.UtcNow;
             return publicMarkers;
+        }
+
+        /// <summary>Public locations change with new zones and newly explored areas; cached until either does.</summary>
+        private static object PublicLocations()
+        {
+            var i = GameCalls.OnMain(MapService.Info);
+            string key = i.Long("locationsVersion") + "|" + i.Long("fogVersion");
+            if (publicLocations != null && key == publicLocationsKey) return publicLocations;
+            publicLocations = Cmd("map_locations", Obj("admin", false));
+            publicLocationsKey = key;
+            return publicLocations;
         }
 
         private static List<object> OnlinePlayers() => GameCalls.Plain(Cmd("players")) as List<object> ?? new List<object>();

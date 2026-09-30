@@ -16,6 +16,8 @@ namespace ValheimAdmin
         private static MapGenerator generator;
         private static FogTracker fog;
         private static MapMarkers markers;
+        private static ZdoScanner scanner;
+        private static GamePins gamePins;
         private static string worldDir;
 
         public static string DataRoot => Path.Combine(Paths.ConfigPath, "ValheimAdmin");
@@ -34,7 +36,9 @@ namespace ValheimAdmin
             float dt = Time.unscaledDeltaTime;
             generator.Update();
             fog.Update(dt);
-            markers.Update(dt);
+            gamePins.Update(dt);
+            if (scanner.Update(dt))
+                gamePins.UpdateTables(scanner.MapTables, scanner);
         }
 
         private static void Init()
@@ -46,7 +50,9 @@ namespace ValheimAdmin
             float pixel = Mathf.Clamp(BepInExPlugin.MapPixelSize.Value, 2f, 64f);
             generator = new MapGenerator(worldDir, size, pixel);
             fog = new FogTracker(Path.Combine(worldDir, "fog.bin"), size, pixel);
-            markers = new MapMarkers(Path.Combine(worldDir, "pins.json"));
+            scanner = new ZdoScanner();
+            gamePins = new GamePins(Path.Combine(worldDir, "player-pins.json"), fog);
+            markers = new MapMarkers(Path.Combine(worldDir, "pins.json"), scanner, gamePins);
             generator.Start(false, BepInExPlugin.MapDrawInBackground.Value);
         }
 
@@ -54,6 +60,7 @@ namespace ValheimAdmin
         public static void Save()
         {
             fog?.Save();
+            gamePins?.SaveIfChanged();
         }
 
         public static Dictionary<string, object> Info()
@@ -76,6 +83,7 @@ namespace ValheimAdmin
                 { "publicMapFile", File.Exists(fog.PublicMapFile) ? fog.PublicMapFile : null },
                 { "fogVersion", fog.PngVersion },
                 { "publicFog", BepInExPlugin.MapPublicFog.Value },
+                { "locationsVersion", MapLocations.Version() },
             };
         }
 
@@ -94,7 +102,10 @@ namespace ValheimAdmin
             switch (cmd)
             {
                 case "map_markers":
-                    result = markers.Build(args.Bool("admin"), fog);
+                    result = markers.Build(args.Bool("admin"), fog, args.Bool("pins"));
+                    return true;
+                case "map_locations":
+                    result = MapLocations.Build(args.Bool("admin"), fog);
                     return true;
                 case "map_regen":
                     generator.Start(true, BepInExPlugin.MapDrawInBackground.Value);
