@@ -1,53 +1,90 @@
 # Valheim Admin
 
-A web panel for your Valheim dedicated server, with a **public world map** for your players. One mod for the server and for players.
+**Run your Valheim dedicated server from a web browser, and give your players a live world map.**
 
-Full manual: [project page](https://github.com/NeocorDK/Valheim-Admin-Tool).
+A plain dedicated server is just a console window. With this mod you get a web page for your server:
 
-## What you get
+- 🗺️ **A world map anyone can open**, no login needed. It shows players, portals, bosses, dungeons, traders and pins. By default only the areas players have explored are visible.
+- 🛠️ **An admin panel** behind a password. It has a live console, an event log, player management, character backups with item restore, and config editing.
 
-- **World map in the browser, no login needed.** The landing page is a map of your world with players, pins and, if you like, portals and places. It can show only the areas players have explored (the rest never leaves the server). Works with the `nomap` key; the admin always sees the whole map, all players, portals and tombstones.
-- **Every location of your world** on the map, like valheim.tools but for your actual (modded) world: boss altars, dungeons, vegvisirs, traders, camps, tar pits, runestones and more, with filters and search. Plus mob spawners (nests, bone piles) and **pins from the game's map**: cartography table pins and, for the admin, players' own pins.
-- **Admin panel** behind a password:
-  - **Console:** the server log live, and **any console command, vanilla or from other mods, run on the server**; `@Player god` and other commands on a player's game.
-  - **Event log:** joins, leaves, deaths with cause, chat, boss kills, raids, saves.
-  - **Players:** online list, sessions, play time, kick/ban, admin and whitelist editing, give items.
-  - **Character snapshots:** inventory, equipment and skills saved on every world save, **with everything mods keep on items** (Epic Loot, Jewelcrafting, Adventure Backpacks, Therzie's mods, …) and skills from mods. Compare with the live character and **restore** lost items and skills. Real item icons and tooltips.
-  - **Configs:** edit `BepInEx/config` files in the browser.
+It works on **rented hosts and Linux** as well as on your own Windows PC, and it works with modded servers.
 
-## Install on the server
+---
 
-The mod works in two ways and picks one by itself:
+## What you can do
 
-| | Rented host / Linux (**standalone**) | Your own Windows PC (**with the agent**) |
+**On the map (for everyone)**
+- See where players are. Only players with "Visible on map" turned on are shown.
+- See the real map of your world, including worlds changed by generation mods.
+- You choose what the public sees: portals, boss altars, dungeons, traders, mob nests, cartography table pins.
+
+**In the admin panel**
+- **See the whole world:** every boss altar, dungeon, trader, vegvisir, camp and tar pit. It's like valheim.tools, but for *your* world, with search and filters.
+- **See players' own pins**, including where they died.
+- **Console:** read the server log live and run any console command on the server, including commands from other mods. Commands like `@Ragnar god` run on a player's game.
+- **Event log:** joins, leaves, deaths with the cause, chat, boss kills, raids.
+- **Players:** who is online, play time, kick, ban, whitelist, give items.
+- **Get lost items back:** each player's inventory and skills are saved on every world save, including enchantments and other mod data (Epic Loot, Jewelcrafting, backpacks, …). Compare with the current character and restore what was lost.
+- **Edit mod configs** in the browser.
+
+---
+
+## Install on a rented host or Linux
+
+1. Install this mod on the server.
+2. Start the server. In the BepInEx log, find the line **`Web panel admin password: …`**. To set your own password, put it in `[Web] AdminPassword` in `BepInEx/config/neocor.ValheimAdmin.cfg`.
+3. Allow incoming connections to TCP port **8095** in your host's panel. If your host gives you a different port, set it as `[Web] Port`.
+4. Open `http://<server-address>:8095`. Share this address with your players for the map.
+
+## Install on your own Windows PC
+
+Install this mod on the server, then download the **agent** from [GitHub releases](https://github.com/NeocorDK/Valheim-Admin-Tool/releases). The agent is a small program that runs next to the server and adds the following:
+- start, stop and restart the server from the panel;
+- automatic restart after a crash or a freeze;
+- scheduled daily restarts, with a countdown in the game;
+- game updates through SteamCMD, with a backup first.
+
+The setup guide is on [GitHub](https://github.com/NeocorDK/Valheim-Admin-Tool#quick-start-your-own-windows-pc).
+
+---
+
+## For players (optional)
+
+Players can join without the mod. Players who install it get these extras:
+- the admin can **restore lost items and skills** for them;
+- their pins show up on the admin's map;
+- the panel shows real item icons.
+
+Players stay in control, in `BepInEx/config/neocor.ValheimAdmin.cfg`:
+- `[Client] AllowServerCommands`: allow or refuse console commands from the admin;
+- `[Client] AllowRestore`: allow or refuse restores and item gifts;
+- `[Client] SharePins`: show or hide your map pins from the admin. Your pins are never shown on the public map.
+
+The mod only accepts requests from the server you are playing on. Cheat commands permanently mark a character as having used cheats (this affects achievements), so the admin has to confirm them in the panel first.
+
+---
+
+## Main settings
+
+Server settings, in `BepInEx/config/neocor.ValheimAdmin.cfg`:
+
+| Setting | Default | What it does |
 |---|---|---|
-| Install | this mod | this mod + the agent from the [releases](https://github.com/NeocorDK/Valheim-Admin-Tool/releases) |
-| Panel | served by the mod on TCP port 8095 | served by the agent |
-| Start/stop, watchdog, scheduled restarts, SteamCMD updates | your host's panel | yes |
+| `[Map] PublicFog` | on | the public map shows only explored areas |
+| `[Map] PublicPlayers` | `respect` | which players the public map shows: `respect` (only those with "Visible on map"), `all`, `none` |
+| `[Map] PublicPortals`, `PublicLocations`, `PublicSpawners`, `PublicGamePins` | off | extra layers on the public map |
+| `[Web] Port` | `8095` | the panel's port on a rented host |
+| `[Web] AdminPassword` | — | set a new admin password |
 
-**Standalone:** install the mod, start the server, and find **"Web panel admin password: …"** in the BepInEx log (or set your own in `[Web] AdminPassword`). Make sure your host lets players reach port 8095 (`[Web] Port`), then open `http://<server-address>:8095`.
+---
 
-**With the agent:** see the [installation guide](https://github.com/NeocorDK/Valheim-Admin-Tool#quick-start-your-own-windows-pc).
+## More information
 
-## Players (optional, recommended)
+The full guide, all settings, troubleshooting and the **agent download** are on GitHub:
+**https://github.com/NeocorDK/Valheim-Admin-Tool**
 
-Players who install the same mod get **character snapshots** and can have lost items restored; the admin can run console commands on their game. The panel's item icons are drawn by a player's game. Players without the mod can join and play normally.
+Please report bugs and ideas there too.
 
-Privacy and control, in `BepInEx/config/neocor.ValheimAdmin.cfg` on the player's side:
+---
 
-- the mod only accepts requests from the server you are connected to;
-- `[Client] AllowServerCommands` turns off remote console commands, `[Client] AllowRestore` turns off restores and item gifts;
-- `[Client] SharePins` (on) lets the server admin see the pins of your map on the admin panel's map (never on the public one);
-- the public map shows you only while "Visible on map" is on in the game.
-
-Cheat commands mark a character as having used cheats (Valheim achievements); the admin has to confirm that in the panel before it happens.
-
-## Server settings (`[Map]`, `[Web]`)
-
-- `[Map] PublicFog` (on): the public map shows explored areas only. `[Map] PublicPlayers`: `respect` / `all` / `none`. `[Map] PublicPortals`, `PublicLocations`, `PublicSpawners`, `PublicGamePins`: off by default.
-- `[Map] TextureSize` / `PixelSize`: map resolution; raise the size for worlds enlarged by mods.
-- `[Web] Port`, `Bind`, `AdminPassword`, `Language`, `DataDir`: the standalone panel.
-
-Data of the standalone panel (event log, snapshots, icons, map) is in `BepInEx/config/ValheimAdmin`.
-
-Security: one admin password (PBKDF2), HttpOnly cookie sessions, lockout after 5 wrong attempts. Plain HTTP sends the password unencrypted; for access over the internet prefer HTTPS (agent) or a VPN such as Tailscale.
+*This mod was made with the help of [Claude Code](https://claude.com/claude-code).*
