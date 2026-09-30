@@ -3,7 +3,7 @@
   "name": "ValheimAdmin",
   "description": "Web admin panel and public world map for dedicated servers: console for any command, event log, players, mod-agnostic character snapshots with restore. Works on rented hosts too.",
   "version_number": "0.4.0",
-  "dependencies": [],
+  "dependencies": ["denikson-BepInExPack_Valheim-5.4.2351"],
   "website_url": "https://github.com/NeocorDK/Valheim-Admin-Tool",
   "FullName": "Neocor-ValheimAdmin"
 }
