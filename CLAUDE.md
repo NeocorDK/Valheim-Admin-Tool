@@ -1,6 +1,6 @@
 # CLAUDE.md — Valheim Admin
 
-Guide for AI agents and maintainers. User-facing docs live in `README.md` / `README.ru.md` and
+Guide for AI agents and maintainers. User-facing docs live in `README.md` (English only) and
 `package/thunderstore/README.md`; this file explains how the code works and the traps in it.
 Keep it current: update the relevant section in the same change that alters behaviour.
 
@@ -60,7 +60,8 @@ ValheimAdmin.Agent/            agent (net10.0, Microsoft.NET.Sdk.Web)
   Web/StatusPump.cs            status every 2 s; StatusBuilder; LoginGuard (5 fails → 10 min lock per IP)
 ValheimAdmin.Common/           logic shared by agent and plugin, compiled into both (csproj Compile Link), net472-safe C#,
                                Dictionary/List JSON model: Json.cs, ConsoleLine (console parser), SnapshotRules
-                               (hash/diff/retention/restore payload, EpicLoot adapter), EventText (event-log texts en/ru)
+                               (hash/diff/retention/restore payload, EpicLoot adapter), EventText (event-log texts en/ru),
+                               SharedMapData (cartography table data parser)
 web/                           panel: vanilla JS ES modules, no build step (index.html, app.js, app.css, i18n.js);
                                the agent copies it to wwwroot/ (csproj Content link), the plugin will embed it
 ValheimAdmin.Agent.Tests/      xUnit: SnapshotLogicTests, MiscTests (parser, log levels, i18n, config, store, scheduler)
@@ -70,7 +71,7 @@ ValheimAdmin.Plugin/           plugin (net472)
   Server/AgentLink.cs          TCP client to the agent (background thread), buffering of events
   Server/Commands.cs           agent command dispatcher (runs on Unity main thread)
   Server/Web/                  standalone web server: Http, WebAuth, LocalStore, LogCapture/GameCalls, StandaloneServer
-  Server/Map/                  MapService, MapGenerator, FogTracker, MapMarkers, Png (world map)
+  Server/Map/                  MapService, MapGenerator, FogTracker, MapMarkers, MapLocations, ZdoScanner, GamePins, Png (world map)
   Server/ServerRole.cs         modded peer registry, server→client requests with timeouts, snapshot rounds, heartbeat
   Server/Hooks.cs              Harmony patches → events (join/leave/save/chat/boss/globalkey/raid/death fallback), RPC registration
   ConsoleRunner.cs             runs game console commands with output capture and the cheat-check overrides (both roles)
@@ -125,7 +126,8 @@ requests time out in `ServerRole.Update`, and are failed when the peer disconnec
 
 `VA_Hello` (client→server on spawn: version, characterId, name), `VA_Reply`, `VA_Death`,
 `VA_Cmd` (console line, 0.2 protocol), `VA_Run` (JSON `{line, confirmCheats}`), `VA_Give` (prefab, count, quality), `VA_SnapReq` (trigger),
-`VA_Restore` (payload), `VA_Chat` (server message line in chat), `VA_Icons` (render item icons).
+`VA_Restore` (payload), `VA_Chat` (server message line in chat), `VA_Icons` (render item icons),
+`VA_Pins` (0.4+: the player's own map pins, or `{disabled}` when `[Client] SharePins` is off).
 
 ## Commands (panel console → bridge → plugin)
 
@@ -237,28 +239,50 @@ mark a not-yet-cheated character (the panel asks the admin and resends with `con
     `MapMarkers.PositionOf` = character ZDO position or `m_refPos`), saved to `fog.bin` on world
     save. `RefreshPngs` writes `fog.png` and **`map-public.png` (map with unexplored areas painted
     over)** on a thread pool thread, at most every 30 s — the public never receives the full map.
-  - `MapMarkers.Build(admin)`: players (public view honours the in-game "Visible on map"
-    `m_publicRefPos` unless `[Map] PublicPlayers`), portals (`ZDOMan.m_portalObjects`, tag from
-    `ZDOVars.s_tag`; modded portals included), location icons (`ZoneSystem.GetLocationIcons`,
-    the game's own icon rules), tombstones (admin only; `Player_tombstone` found with the game's
-    iterative sector scan, spread over frames, every 30 s), admin pins (`pins.json`). Public view
-    shows portals/locations only when enabled and only in explored areas.
-  - Bridge commands: `map_info`, `map_markers {admin}`, `map_regen`, `map_pin_add`, `map_pin_remove`.
+  - `MapMarkers.Build(admin, fog, withPins)` (polled every 3 s): players (public view honours the in-game
+    "Visible on map" `m_publicRefPos` unless `[Map] PublicPlayers`), portals (`ZDOMan.m_portalObjects`, tag
+    from `ZDOVars.s_tag`; modded portals included), tombstones (admin only), `spawners`, `gamePins`
+    (cartography tables), `playerPins` (admin only), admin pins (`pins.json`). The admin gets `gamePins`/
+    `playerPins` only with `pins` (the panel asks every 30 s). Public view shows portals/spawners/table pins
+    only when enabled and only in explored areas.
+  - `ZdoScanner`: one pass over `ZDOMan.m_objectsBySector` every 30 s, 400 non-empty sectors per frame,
+    collecting `Player_tombstone`, prefabs with `SpawnArea` (mob spawners) and with `MapTable` (found by
+    component in `ZNetScene.m_prefabs`, so modded ones count). **ZDOs of destroyed objects are pooled and
+    reused**: check `StillIs(zdo, kind)` before using a found ZDO.
+  - `MapLocations`: every entry of `ZoneSystem.m_locationInstances` (the whole world's locations, generated
+    at world creation, modded ones included) as `{version, defeated: [defeated_* keys], types: {prefab:
+    [[x, z, placed]]}}`; `version` (count + placed count) is also `locationsVersion` in `map_info`, so the
+    panel reloads only on change. The panel categorises prefabs by name (`LOCATION_CATEGORIES` in app.js;
+    unknown → "other") and names them via `loc.<prefab without trailing digits>` i18n keys.
+  - `GamePins`: cartography tables keep `Utils.Compress(Minimap.GetSharedMapData)` in `ZDOVars.s_data`
+    (format in `SharedMapData`). Tables whose `DataRevision` changed are decompressed/parsed on the thread
+    pool; pins are merged (one per metre), and the table's explored grid (game minimap grid, 12 m cells) is
+    resampled into `FogTracker.MergeExplored`. Personal pins: every 60 s `VA_Pins` to online 0.4+ modded
+    peers; answers are kept per character id in `player-pins.json` with learned characterId → name (for
+    table pin owners, from the character ZDO's `s_playerID`).
+  - Bridge commands: `map_info`, `map_markers {admin, pins}`, `map_locations {admin}`, `map_regen`,
+    `map_pin_add`, `map_pin_remove`.
   - Files: `BepInEx/config/ValheimAdmin/map/<world>-<seed>/`.
   - Config `[Map]`: `Enabled`, `TextureSize` (2048), `PixelSize` (12), `DrawInBackground`,
-    `PublicFog` (true), `PublicPlayers` (respect|all|none), `PublicPortals`, `PublicLocations`.
+    `PublicFog` (true), `PublicPlayers` (respect|all|none), `PublicPortals`, `PublicLocations`,
+    `PublicSpawners`, `PublicGamePins` (all false). `[Client] SharePins` (true) on the player's side.
 - **Agent** (`Server/MapProxy.cs`): caches `map_info` (3 s) and keeps the last one so the map
   survives server restarts; serves the PNGs the plugin reported (paths never leave the agent).
   Anonymous: `/api/public/info` (mode, name, admin flag, features, map state),
-  `/api/public/map.png` (`map-public.png` when PublicFog), `/api/public/markers` (cached 2 s).
-  Admin: `/api/map/full.png`, `/api/map/fog.png`, `/api/map/markers`, `/api/map/info`,
+  `/api/public/map.png` (`map-public.png` when PublicFog), `/api/public/markers` (cached 2 s),
+  `/api/public/locations` (cached until `locationsVersion` or the fog changes).
+  Admin: `/api/map/full.png`, `/api/map/fog.png`, `/api/map/markers[?pins=1]`, `/api/map/locations`, `/api/map/info`,
   `POST /api/map/regen`, `POST /api/map/pins`, `DELETE /api/map/pins/{id}`. Rate limits:
   `login` 10/min/IP (plus LoginGuard lockout), `public` 300/min/IP.
 - **Panel**: no login screen any more. `#map` is the default tab for everybody; the sidebar has
   "Admin sign-in" (dialog, warns on plain HTTP outside localhost/Tailscale). After sign-in the
   admin tabs from `features` appear. `views.map` uses Leaflet 1.9.4 (vendored in
   `web/vendor/leaflet`, BSD-2) with `CRS.Simple`, lat = z, lng = x in metres; markers polled
-  every 3 s; admin: layer toggles, explored overlay, redraw, right-click to add a pin.
+  every 3 s (a layer is rebuilt only when its JSON changed); many-point layers (runestones, camps,
+  resources, other, spawners) are `circleMarker`s on one `L.canvas` renderer, the rest divIcon glyphs.
+  Layer panel (built once, counts updated in place so the search box keeps focus): sections, per-layer
+  visibility in `va_map_layers` (defaults: other/runestones/spawners hidden), collapse, search (Enter
+  jumps to the next match, nearest first). Admin: explored overlay, redraw, right-click to add a pin.
   Views may return `{live, dispose}`; `route()` calls `dispose` (the map removes its timers).
 - HTTPS (optional, agent): `Https.Port` + `Https.CertificatePath` (PFX) + `Https.CertificatePassword`.
 
@@ -292,7 +316,7 @@ the plugin never opens a web port.
   `events/YYYY-MM-DD.jsonl` (last 5000 in memory for queries), `players.json` (sessions, host),
   `snapshots/index.json` + `snapshots/data/<hash>.json.gz` (dedup via `SnapshotRules.ContentHash`,
   retention `[Web] SnapshotKeepAllDays/KeepDailyDays` hourly), `icons/*.png`, `audit.jsonl`,
-  `config-backups/`, `sessions.json`. Map files stay under `map/`.
+  `config-backups/`, `sessions.json`. Map files stay under `map/` (`pins.json`, `player-pins.json`, ...).
 - Events: `AgentLink.Event` also calls `AgentLink.LocalEvent` (set by the standalone server), which
   records sessions, stores snapshots, fetches icons and writes the log row via `EventText.Describe`
   (language `[Web] Language`).
@@ -372,7 +396,7 @@ Look at `BepInEx/LogOutput.log` on both sides; set `[General] Debug = true` for 
 3. `package.ps1` → `dist/neocor-ValheimAdmin-<v>.zip` (Thunderstore: DLL with the embedded panel,
    README, CHANGELOG, icon, manifest; description max 250 chars) and
    `dist/ValheimAdmin-<v>-win-x64.zip` (agent + DLL + docs) for GitHub Releases.
-4. Branch `snapshots-v0.2` keeps 0.2.0. No GitHub remote is configured yet; ask before pushing.
+4. Branch `snapshots-v0.2` keeps 0.2.0. GitHub: `origin` = https://github.com/NeocorDK/Valheim-Admin-Tool (main); ask before pushing.
 
 ## Known limitations / traps
 

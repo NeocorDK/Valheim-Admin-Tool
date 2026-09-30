@@ -87,7 +87,6 @@ New-Zip (Join-Path $dist "ValheimAdmin-$version-win-x64.zip") @{
     'ValheimAdmin/agent'                    = $agentOut
     'ValheimAdmin/mod/ValheimAdmin.dll'     = $pluginDll
     'ValheimAdmin/README.md'                = Join-Path $root 'README.md'
-    'ValheimAdmin/README.ru.md'             = Join-Path $root 'README.ru.md'
     'ValheimAdmin/LICENSE'                  = Join-Path $root 'LICENSE'
     'ValheimAdmin/THIRD_PARTY_NOTICES.md'   = Join-Path $root 'THIRD_PARTY_NOTICES.md'
     'ValheimAdmin/CHANGELOG.md'             = Join-Path $root 'CHANGELOG.md'
